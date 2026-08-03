@@ -1,8 +1,8 @@
 {
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "migrate": "node api/migration.js"
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate": "node src/modules/companies/migration.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

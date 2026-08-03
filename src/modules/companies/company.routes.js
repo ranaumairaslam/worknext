@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const pool = require('../config/db');
-const protect = require('../middleware/auth');
+const pool = require('../../config/db');
+const protect = require('../../middleware/auth.middleware');
 
 const router = express.Router();
 
@@ -55,43 +55,60 @@ router.use(protect, loadCompany);
 
 router.get('/dashboard', async (req, res, next) => {
   try {
-    const { id: companyId } = req.company;
+    const companyId = req.company.id;
 
-    const [employeeSummary, projectSummary, teamSummary, clientCount, taskSummary, recentProjects, recentTasks] = await Promise.all([
+    const [projectSummary, teamSummary, clientSummary, employeeSummary, taskSummary, revenueSummary, projectProgress] = await Promise.all([
       pool.query(`
         SELECT
-          COUNT(*)::int AS total_employees,
-          COUNT(*) FILTER (WHERE status = 'active')::int AS active_employees,
-          COUNT(*) FILTER (WHERE status = 'inactive')::int AS inactive_employees,
-          COUNT(*) FILTER (WHERE role = 'team_leader')::int AS team_leaders,
-          COUNT(*) FILTER (WHERE role = 'team_member')::int AS team_members
-        FROM users
-        WHERE company_id = $1 AND role IN ('team_leader', 'team_member', 'company')
+          COUNT(*)::int AS total_projects,
+          COUNT(*) FILTER (WHERE status = 'active')::int AS active_projects,
+          COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_projects
+        FROM projects
+        WHERE company_id = $1
       `, [companyId]),
-      pool.query('SELECT COUNT(*)::int AS total_projects, COUNT(*) FILTER (WHERE status = ANY($1::text[]))::int AS active_projects FROM projects WHERE company_id = $2', [ ['active'], companyId ]),
       pool.query('SELECT COUNT(*)::int AS total_teams FROM teams WHERE company_id = $1', [companyId]),
       pool.query('SELECT COUNT(*)::int AS total_clients FROM clients WHERE company_id = $1', [companyId]),
       pool.query(`
         SELECT
+          COUNT(*)::int AS total_employees,
+          COUNT(*) FILTER (WHERE status = 'active')::int AS active_employees,
+          COUNT(*) FILTER (WHERE status = 'inactive')::int AS inactive_employees
+        FROM users
+        WHERE company_id = $1 AND role IN ('company', 'team_leader', 'team_member')
+      `, [companyId]),
+      pool.query(`
+        SELECT
           COUNT(*)::int AS total_tasks,
-          COUNT(*) FILTER (WHERE status = 'todo')::int AS todo_tasks,
-          COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_tasks,
-          COUNT(*) FILTER (WHERE status = 'done')::int AS done_tasks,
-          COUNT(*) FILTER (WHERE status = 'blocked')::int AS blocked_tasks
+          COUNT(*) FILTER (WHERE status IN ('todo', 'in_progress'))::int AS active_tasks,
+          COUNT(*) FILTER (WHERE status = 'done')::int AS completed_tasks,
+          COUNT(*) FILTER (WHERE status = 'blocked')::int AS pending_tasks
         FROM tasks
         WHERE company_id = $1
       `, [companyId]),
-      pool.query('SELECT id, name, status, created_at FROM projects WHERE company_id = $1 ORDER BY created_at DESC LIMIT 5', [companyId]),
+      pool.query('SELECT COALESCE(SUM(amount), 0)::numeric(14,2) AS total_revenue FROM revenues WHERE company_id = $1', [companyId]),
       pool.query(`
-        SELECT t.id, t.title, t.status, t.priority, t.due_date,
-               p.id AS project_id, p.name AS project_name,
-               u.id AS assignee_id, u.name AS assignee_name
-        FROM tasks t
-        LEFT JOIN projects p ON p.id = t.project_id
-        LEFT JOIN users u ON u.id = t.assignee_id
-        WHERE t.company_id = $1
-        ORDER BY t.created_at DESC
-        LIMIT 5
+        SELECT
+          p.id AS project_id,
+          p.name AS project_name,
+          COALESCE(team.name, 'Unassigned') AS assigned_team,
+          p.status,
+          COALESCE(ROUND(100.0 * SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) / NULLIF(COUNT(t.id), 0)), 0)::int AS progress
+        FROM projects p
+        LEFT JOIN tasks t ON t.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT tm.id, tm.name
+          FROM tasks tt
+          JOIN users u ON u.id = tt.assignee_id
+          JOIN teams tm ON tm.id = u.team_id
+          WHERE tt.project_id = p.id AND tm.id IS NOT NULL
+          GROUP BY tm.id, tm.name
+          ORDER BY COUNT(*) DESC
+          LIMIT 1
+        ) team ON true
+        WHERE p.company_id = $1
+        GROUP BY p.id, p.name, p.status, team.name
+        ORDER BY p.created_at DESC
+        LIMIT 6
       `, [companyId]),
     ]);
 
@@ -99,13 +116,17 @@ router.get('/dashboard', async (req, res, next) => {
       success: true,
       data: {
         company: req.company,
-        employees: employeeSummary.rows[0],
-        projects: projectSummary.rows[0],
-        teams: teamSummary.rows[0],
-        clients: clientCount.rows[0],
-        tasks: taskSummary.rows[0],
-        recent_projects: recentProjects.rows,
-        recent_tasks: recentTasks.rows,
+        total_projects: projectSummary.rows[0].total_projects,
+        active_projects: projectSummary.rows[0].active_projects,
+        completed_projects: projectSummary.rows[0].completed_projects,
+        total_teams: teamSummary.rows[0].total_teams,
+        total_employees: employeeSummary.rows[0].total_employees,
+        total_clients: clientSummary.rows[0].total_clients,
+        total_revenue: Number(revenueSummary.rows[0].total_revenue),
+        active_tasks: taskSummary.rows[0].active_tasks,
+        completed_tasks: taskSummary.rows[0].completed_tasks,
+        pending_tasks: taskSummary.rows[0].pending_tasks,
+        project_progress: projectProgress.rows,
       },
     });
   } catch (error) {
