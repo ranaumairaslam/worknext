@@ -170,11 +170,7 @@ export default function App() {
         <h2>Test company creation</h2>
         <p className="helper">This uses the protected /api/super-admin/companies route with a temporary demo token.</p>
 
-        <button className="secondary" onClick={generateDemoToken} disabled={testLoading}>
-          {testLoading ? 'Generating…' : 'Generate demo token'}
-        </button>
-
-        {testToken && <p className="token">Token: {testToken.slice(0, 24)}…</p>}
+       
 
         <form onSubmit={createCompany} className="tester-form">
           <label>Company name<input required value={companyForm.companyName} onChange={(event) => setCompanyForm({ ...companyForm, companyName: event.target.value })} placeholder="Acme Ltd" /></label>
