@@ -20,6 +20,7 @@ async function createCompany(req, res, next) {
       industry,
       website,
       password,
+      payment,
     } = req.body;
 
     // Validate password
@@ -43,20 +44,42 @@ async function createCompany(req, res, next) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create company
-    const companyResult = await client.query(
-      `INSERT INTO companies
-      (name, contact_email, phone, address, industry, website, status, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,'active',NOW())
-      RETURNING id, name, contact_email, phone, address, industry, website, status, created_at`,
-      [
-        companyName,
-        contactEmail || null,
-        phone || null,
-        address || null,
-        industry || null,
-        website || null,
-      ]
-    );
+   const companyResult = await client.query(
+  `INSERT INTO companies
+  (
+    name,
+    contact_email,
+    phone,
+    address,
+    industry,
+    website,
+    revenue,
+    status,
+    created_at
+  )
+  VALUES
+  ($1,$2,$3,$4,$5,$6,$7,'active',NOW())
+  RETURNING
+    id,
+    name,
+    contact_email,
+    phone,
+    address,
+    industry,
+    website,
+    revenue,
+    status,
+    created_at`,
+  [
+    companyName,
+    contactEmail || null,
+    phone || null,
+    address || null,
+    industry || null,
+    website || null,
+    payment || 0,
+  ]
+);
 
     const company = companyResult.rows[0];
 
