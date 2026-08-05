@@ -13,7 +13,7 @@ const authorizeRole = (...roles) => (req, res, next) => {
   next();
 };
 
-// GET /api/company/clients - List clients
+// GET /api/company/clients - List clients, each with their projects
 router.get('/', async (req, res, next) => {
   try {
     const clients = await pool.query(
@@ -25,16 +25,31 @@ router.get('/', async (req, res, next) => {
       [req.company.id]
     );
 
-    res.json({ success: true, data: clients.rows });
+    // Attach each client's projects (all projects for the company, since
+    // projects belong to company_id rather than a specific client row)
+    const { rows: projects } = await pool.query(
+      `SELECT id, name, description, status, start_date, end_date, created_at
+       FROM projects
+       WHERE company_id = $1
+       ORDER BY created_at DESC`,
+      [req.company.id]
+    );
+
+    const data = clients.rows.map((client) => ({
+      ...client,
+      projects,
+    }));
+
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }
 });
 
-// POST /api/company/clients - Create client profile
+// POST /api/company/clients - Create client profile AND their initial project
 router.post('/', authorizeRole('company'), async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, project_name, project_description } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'Name, email, and password are required' });
     }
@@ -43,6 +58,9 @@ router.post('/', authorizeRole('company'), async (req, res, next) => {
     }
     if (password.length < 6) {
       return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
+    }
+    if (!project_name || !project_name.trim()) {
+      return res.status(400).json({ success: false, message: 'project_name is required' });
     }
 
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email.trim().toLowerCase()]);
@@ -53,18 +71,37 @@ router.post('/', authorizeRole('company'), async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
       const passwordHash = await bcrypt.hash(password, 10);
+
       const { rows: userRows } = await client.query(
         'INSERT INTO users (name, email, password, role, company_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email, role, company_id',
         [name.trim(), email.trim().toLowerCase(), passwordHash, 'client', req.company.id]
       );
+
       const { rows: clientRows } = await client.query(
         'INSERT INTO clients (name, email, company_id, user_id) VALUES ($1, $2, $3, $4) RETURNING id, name, email, company_id, user_id, created_at',
         [name.trim(), email.trim().toLowerCase(), req.company.id, userRows[0].id]
       );
+
+      // Create the client's initial project alongside their profile
+      const { rows: projectRows } = await client.query(
+        `INSERT INTO projects (company_id, name, description, status)
+         VALUES ($1, $2, $3, 'active')
+         RETURNING id, name, description, status, start_date, end_date, created_at`,
+        [req.company.id, project_name.trim(), project_description ? project_description.trim() : null]
+      );
+
       await client.query('COMMIT');
 
-      res.status(201).json({ success: true, message: 'Client created', data: clientRows[0] });
+      res.status(201).json({
+        success: true,
+        message: 'Client created',
+        data: {
+          ...clientRows[0],
+          project: projectRows[0],
+        },
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

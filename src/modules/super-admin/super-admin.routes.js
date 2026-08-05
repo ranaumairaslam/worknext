@@ -9,8 +9,8 @@ const router = express.Router();
 // Apply super admin protection to all routes in this module
 router.use(protect, authorize('super_admin'));
 
-// POST /api/super-admin/companies - Create a company and its owner
-router.post('/companies', async (req, res, next) => {
+// Helper helper function to create a company and user with a specific role
+async function createCompanyWithRole(req, res, next, defaultRole = 'company') {
   const client = await pool.connect();
 
   try {
@@ -22,13 +22,22 @@ router.post('/companies', async (req, res, next) => {
       phone,
       address,
       industry,
-      website
+      website,
+      role
     } = req.body;
 
     if (!companyName || !ownerName || !email || !password) {
       return res.status(400).json({
         success: false,
         message: "Company name, owner name, email and password are required."
+      });
+    }
+
+    const targetRole = role || defaultRole;
+    if (targetRole !== 'company' && targetRole !== 'team_leader') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role specified. Supported roles: 'company', 'team_leader'"
       });
     }
 
@@ -74,13 +83,14 @@ router.post('/companies', async (req, res, next) => {
     const userResult = await client.query(
       `INSERT INTO users
       (company_id,name,email,password,role,status,created_at)
-      VALUES($1,$2,$3,$4,'company','active',NOW())
+      VALUES($1,$2,$3,$4,$5,'active',NOW())
       RETURNING id,name,email,role`,
       [
         company.id,
         ownerName,
         email.toLowerCase(),
-        hashedPassword
+        hashedPassword,
+        targetRole
       ]
     );
 
@@ -109,7 +119,13 @@ router.post('/companies', async (req, res, next) => {
   } finally {
     client.release();
   }
-});
+}
+
+// POST /api/super-admin/companies - Create a company and its owner
+router.post('/companies', (req, res, next) => createCompanyWithRole(req, res, next, 'company'));
+
+// POST /api/super-admin/team-leader-companies - Create a company and its team leader
+router.post('/team-leader-companies', (req, res, next) => createCompanyWithRole(req, res, next, 'team_leader'));
 
 // GET /api/super-admin/dashboard - Super Admin Dashboard stats
 router.get('/dashboard', async (req, res, next) => {

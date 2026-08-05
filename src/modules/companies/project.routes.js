@@ -1,129 +1,72 @@
-const express = require('express');
-const pool = require('../../config/db');
-const protect = require('../../middleware/auth.middleware');
+const express = require("express");
+const pool = require("../../config/db");
+const protect = require("../../middleware/auth.middleware");
 
-const router = express.Router({ mergeParams:true });
+const router = express.Router({ mergeParams: true });
 
+const authorizeRole = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access",
+      });
+    }
 
-const authorizeRole = (...roles)=>{
-
-return (req,res,next)=>{
-
-if(!roles.includes(req.user.role)){
-
-return res.status(403).json({
-
-success:false,
-message:"You do not have access"
-
-});
-
-}
-
-next();
-
+    next();
+  };
 };
 
-};
+async function loadCompany(req, res, next) {
+  try {
+    const result = await pool.query(
+      "SELECT company_id FROM users WHERE id=$1",
 
+      [req.user.id],
+    );
 
+    const companyId = result.rows[0]?.company_id || req.user.companyId;
 
-async function loadCompany(req,res,next){
+    if (!companyId) {
+      return res.status(403).json({
+        success: false,
+        message: "User does not belong to company",
+      });
+    }
 
-try{
+    req.company = {
+      id: companyId,
+    };
 
-
-const result = await pool.query(
-
-"SELECT company_id FROM users WHERE id=$1",
-
-[req.user.id]
-
-);
-
-
-
-const companyId =
-result.rows[0]?.company_id ||
-req.user.companyId;
-
-
-
-if(!companyId){
-
-return res.status(403).json({
-
-success:false,
-message:"User does not belong to company"
-
-});
-
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
-
-req.company={
-id:companyId
-};
-
-
-next();
-
-
-}catch(error){
-
-next(error);
-
-}
-
-
-}
-
-
-
-router.use(protect,loadCompany);
-
-
+router.use(protect, loadCompany);
 
 // =====================================================
 // CREATE PROJECT
 // =====================================================
 
+router.post(
+  "/",
+  authorizeRole("company", "super_admin"),
 
-router.post('/',
-authorizeRole('company','super_admin'),
+  async (req, res, next) => {
+    try {
+      const { name, description, clientId, startDate, dueDate } = req.body;
 
-async(req,res,next)=>{
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          message: "Project name required",
+        });
+      }
 
-
-try{
-
-
-const {
-name,
-description,
-clientId,
-startDate,
-dueDate
-}=req.body;
-
-
-
-if(!name){
-
-return res.status(400).json({
-
-success:false,
-message:"Project name required"
-
-});
-
-}
-
-
-
-const project = await pool.query(
-
-`
+      const project = await pool.query(
+        `
 
 INSERT INTO projects
 
@@ -146,65 +89,39 @@ VALUES
 
 RETURNING *
 
-`
+`,
 
-,
+        [
+          req.company.id,
+          name,
+          description || null,
+          clientId || null,
+          startDate || null,
+          dueDate || null,
+        ],
+      );
 
-[
-req.company.id,
-name,
-description || null,
-clientId || null,
-startDate || null,
-dueDate || null
-]
+      res.status(201).json({
+        success: true,
 
+        message: "Project created",
+
+        data: project.rows[0],
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
-
-
-
-res.status(201).json({
-
-success:true,
-
-message:"Project created",
-
-data:project.rows[0]
-
-});
-
-
-}
-
-catch(error){
-
-next(error);
-
-}
-
-
-});
-
-
-
-
-
-
 
 // =====================================================
 // GET ALL PROJECTS
 // =====================================================
 
-
-router.get('/',async(req,res,next)=>{
-
-
-try{
-
-
-const projects=await pool.query(
-
-`
+router.get("/", async (req, res, next) => {
+  try {
+    const projects = await pool.query(
+      `
 
 SELECT
 
@@ -236,59 +153,101 @@ WHERE p.company_id=$1
 ORDER BY p.created_at DESC
 
 
-`
+`,
 
-,
+      [req.company.id],
+    );
 
-[
-req.company.id
-]
+    res.json({
+      success: true,
 
+      data: projects.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =====================================================
+// TEAM LEADER DASHBOARD — projects led by logged-in user
+// =====================================================
+
+router.get(
+  "/leader/my-projects",
+  authorizeRole("team_leader"),
+  async (req, res, next) => {
+    try {
+      const projects = await pool.query(
+        `
+        SELECT
+          p.*,
+          t.name AS team_name
+        FROM projects p
+        LEFT JOIN teams t ON t.id = p.team_id
+        WHERE p.project_leader_id = $1
+        AND p.company_id = $2
+        ORDER BY p.created_at DESC
+        `,
+        [req.user.id, req.company.id],
+      );
+
+      res.json({
+        success: true,
+        data: projects.rows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
+// team members under a leader's team, for a given project
+router.get(
+  "/leader/:projectId/team-members",
+  authorizeRole("team_leader"),
+  async (req, res, next) => {
+    try {
+      const project = await pool.query(
+        `SELECT team_id FROM projects
+         WHERE id=$1 AND company_id=$2 AND project_leader_id=$3`,
+        [req.params.projectId, req.company.id, req.user.id],
+      );
 
+      if (!project.rows[0]) {
+        return res.status(404).json({
+          success: false,
+          message: "Project not found or you are not its leader",
+        });
+      }
 
-res.json({
+      const members = await pool.query(
+        `SELECT id, name, email, role
+         FROM users
+         WHERE team_id=$1 AND company_id=$2`,
+        [project.rows[0].team_id, req.company.id],
+      );
 
-success:true,
-
-data:projects.rows
-
-});
-
-
-
-}catch(error){
-
-next(error);
-
-}
-
-
-});
-
-
-
-
-
-
+      res.json({
+        success: true,
+        data: members.rows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // =====================================================
 // GET SINGLE PROJECT
 // =====================================================
 
+router.get(
+  "/:projectId",
 
-router.get('/:projectId',
-
-async(req,res,next)=>{
-
-
-try{
-
-
-const project=await pool.query(
-
-`
+  async (req, res, next) => {
+    try {
+      const project = await pool.query(
+        `
 
 SELECT
 
@@ -314,79 +273,40 @@ WHERE p.id=$1
 AND p.company_id=$2
 
 
-`
+`,
 
-,
+        [req.params.projectId, req.company.id],
+      );
 
-[
-req.params.projectId,
-req.company.id
-]
+      if (!project.rows[0]) {
+        return res.status(404).json({
+          success: false,
+          message: "Project not found",
+        });
+      }
 
+      res.json({
+        success: true,
 
+        data: project.rows[0],
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
-
-
-
-if(!project.rows[0]){
-
-
-return res.status(404).json({
-
-success:false,
-message:"Project not found"
-
-});
-
-
-}
-
-
-
-res.json({
-
-success:true,
-
-data:project.rows[0]
-
-});
-
-
-
-}catch(error){
-
-next(error);
-
-}
-
-
-});
-
-
-
-
-
-
-
-
 
 // =====================================================
 // GET TEAM EMPLOYEES FOR PROJECT ASSIGN
 // =====================================================
 
-
 router.get(
-'/:projectId/team/:teamId/employees',
+  "/:projectId/team/:teamId/employees",
 
-async(req,res,next)=>{
-
-
-try{
-
-
-const employees=await pool.query(
-
-`
+  async (req, res, next) => {
+    try {
+      const employees = await pool.query(
+        `
 
 SELECT
 
@@ -403,93 +323,96 @@ WHERE team_id=$1
 AND company_id=$2
 
 
-`
+`,
 
-,
+        [req.params.teamId, req.company.id],
+      );
 
-[
-req.params.teamId,
-req.company.id
-]
+      res.json({
+        success: true,
 
+        data: employees.rows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
+// =====================================================
+// GET ALL COMPANY EMPLOYEES (for leader selection — any employee,
+// not restricted to a specific team)
+// =====================================================
+
+router.get(
+  "/company/employees",
+
+  authorizeRole("company", "super_admin"),
+
+  async (req, res, next) => {
+    try {
+      const employees = await pool.query(
+        `
+
+SELECT
+
+id,
+name,
+email,
+role,
+team_id
 
 
-res.json({
-
-success:true,
-
-data:employees.rows
-
-});
+FROM users
 
 
-
-}catch(error){
-
-next(error);
-
-}
+WHERE company_id=$1
 
 
-});
+ORDER BY name ASC
 
 
+`,
 
+        [req.company.id],
+      );
 
+      res.json({
+        success: true,
 
-
-
+        data: employees.rows,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // =====================================================
 // ASSIGN PROJECT + PROJECT LEADER
 // =====================================================
 
-
 router.put(
-'/:projectId/assign-team',
+  "/:projectId/assign-team",
 
-authorizeRole('company','super_admin'),
+  authorizeRole("company", "super_admin"),
 
-async(req,res,next)=>{
+  async (req, res, next) => {
+    try {
+      const { teamId, leaderId } = req.body;
 
+      if (!teamId || !leaderId) {
+        return res.status(400).json({
+          success: false,
 
-try{
+          message: "teamId and leaderId required",
+        });
+      }
 
+      // check team
 
-const {
-
-teamId,
-leaderId
-
-}=req.body;
-
-
-
-if(!teamId || !leaderId){
-
-return res.status(400).json({
-
-success:false,
-
-message:
-"teamId and leaderId required"
-
-});
-
-}
-
-
-
-
-
-
-// check team
-
-const team=await pool.query(
-
-`
+      const team = await pool.query(
+        `
 
 SELECT id,name
 
@@ -498,44 +421,24 @@ FROM teams
 WHERE id=$1
 AND company_id=$2
 
-`
+`,
 
-,
+        [teamId, req.company.id],
+      );
 
-[
-teamId,
-req.company.id
-]
+      if (!team.rows[0]) {
+        return res.status(404).json({
+          success: false,
 
-);
+          message: "Team not found",
+        });
+      }
 
+      // check employee — any employee in the company, not restricted
+      // to already being a member of this team
 
-
-if(!team.rows[0]){
-
-
-return res.status(404).json({
-
-success:false,
-
-message:"Team not found"
-
-});
-
-
-}
-
-
-
-
-
-
-// check employee
-
-
-const employee=await pool.query(
-
-`
+      const employee = await pool.query(
+        `
 
 SELECT id,name,email
 
@@ -544,81 +447,42 @@ FROM users
 
 WHERE id=$1
 
-AND team_id=$2
-
-AND company_id=$3
+AND company_id=$2
 
 
-`
+`,
 
-,
+        [leaderId, req.company.id],
+      );
 
-[
-leaderId,
-teamId,
-req.company.id
-]
+      if (!employee.rows[0]) {
+        return res.status(404).json({
+          success: false,
 
+          message: "Employee not found in this company",
+        });
+      }
 
-);
+      // change role + move employee into the team they now lead
 
-
-
-if(!employee.rows[0]){
-
-
-return res.status(404).json({
-
-success:false,
-
-message:
-"Employee not found in this team"
-
-});
-
-
-}
-
-
-
-
-
-
-
-// change role
-
-await pool.query(
-
-`
+      await pool.query(
+        `
 
 UPDATE users
 
-SET role='team_leader'
+SET role='team_leader', team_id=$1
 
-WHERE id=$1
+WHERE id=$2
 
-`
+`,
 
-,
+        [teamId, leaderId],
+      );
 
-[
-leaderId
-]
+      // assign team leader
 
-);
-
-
-
-
-
-
-
-// assign team leader
-
-
-await pool.query(
-
-`
+      await pool.query(
+        `
 
 UPDATE teams
 
@@ -627,30 +491,15 @@ SET leader_id=$1
 WHERE id=$2
 
 
-`
+`,
 
-,
+        [leaderId, teamId],
+      );
 
-[
-leaderId,
-teamId
-]
+      // assign project
 
-);
-
-
-
-
-
-
-
-
-// assign project
-
-
-const project=await pool.query(
-
-`
+      const project = await pool.query(
+        `
 
 UPDATE projects
 
@@ -675,58 +524,26 @@ AND company_id=$4
 RETURNING *
 
 
-`
+`,
 
-,
+        [teamId, leaderId, req.params.projectId, req.company.id],
+      );
 
-[
-teamId,
-leaderId,
-req.params.projectId,
-req.company.id
-]
+      res.json({
+        success: true,
 
+        message: "Project assigned and team leader created",
+
+        data: {
+          project: project.rows[0],
+
+          leader: employee.rows[0],
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
-
-
-
-
-res.json({
-
-success:true,
-
-message:
-"Project assigned and team leader created",
-
-data:{
-
-project:project.rows[0],
-
-leader:employee.rows[0]
-
-}
-
-});
-
-
-
-
-}
-
-catch(error){
-
-next(error);
-
-}
-
-
-});
-
-
-
-
-
-
-
-module.exports=router;
+module.exports = router;
