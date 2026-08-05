@@ -3,6 +3,9 @@ const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
 const authorize = require('../../middleware/role.middleware');
 
+const taskRoutes = require('../team-member/tasks');
+const meetingRoutes = require('../team-member/meetings');
+
 const router = express.Router();
 
 const getDashboardData = async (req, res, next) => {
@@ -23,5 +26,8 @@ const getDashboardData = async (req, res, next) => {
 // GET /api/team-member/ and GET /api/team-member/dashboard
 router.get('/', protect, authorize('team_member'), getDashboardData);
 router.get('/dashboard', protect, authorize('team_member'), getDashboardData);
+
+router.use('/tasks', taskRoutes);
+router.use('/meetings', meetingRoutes);
 
 module.exports = router;

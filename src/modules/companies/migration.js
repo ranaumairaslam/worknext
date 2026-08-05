@@ -1,20 +1,72 @@
 require('dotenv').config();
 const pool = require('../../config/db');
-const bcrypt = require('bcryptjs');
+
+// =======================================================
+// Migration script matching the workflow:
+// Login -> Create Team -> Assign Team Leader ->
+// Create Project -> Assign Project -> Monitor Progress ->
+// Generate Reports -> Add Client
+// =======================================================
 
 async function migrate() {
-  console.log('Starting migration and seeding...');
+  console.log('Starting workflow schema migration...');
   try {
-    // 0. Ensure revenues and tasks tables exist
-    console.log('Ensuring revenues and tasks tables exist...');
+    // TEAMS table (Step 2 & 3: Create Team, Assign Team Leader)
+    console.log('Ensuring teams table exists...');
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS revenues (
+      CREATE TABLE IF NOT EXISTS teams (
         id SERIAL PRIMARY KEY,
         company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-        amount NUMERIC(14,2) NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
+
+    // Make sure users table has team_id column (for step 3: assigning leader/members)
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;
+    `);
+
+    // CLIENTS table (Step 8: Add Client)
+    console.log('Ensuring clients table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255),
+        phone VARCHAR(50),
+        company_name VARCHAR(255),
+        address TEXT,
+        notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    // PROJECTS table (Step 4 & 5: Create Project, Assign Project)
+    console.log('Ensuring projects table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+        team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        start_date DATE,
+        due_date DATE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    // TASKS table (used for progress monitoring in step 6)
+    console.log('Ensuring tasks table exists...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
@@ -30,29 +82,31 @@ async function migrate() {
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
-    console.log('Tables created or already existed.');
-    // 1. Check if superadmin already exists
-    const superAdminEmail = 'superadmin@example.com';
-    const checkRes = await pool.query('SELECT id FROM users WHERE email = $1', [superAdminEmail]);
-    
-    if (checkRes.rows.length > 0) {
-      console.log('Super Admin user already exists. Skipping seeding.');
-      return;
-    }
 
-    // 2. Hash password
-    const passwordHash = await bcrypt.hash('superadmin123', 10);
+    // REVENUES table (used in reports)
+    console.log('Ensuring revenues table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS revenues (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        amount NUMERIC(14,2) NOT NULL,
+        source VARCHAR(255),
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
 
-    // 3. Insert Super Admin user
-    const insertQuery = `
-      INSERT INTO users (name, email, password, role, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
-      RETURNING id, name, email, role;
-    `;
-    const values = ['Super Admin', superAdminEmail, passwordHash, 'super_admin', 'active'];
-    const result = await pool.query(insertQuery, values);
-    
-    console.log('Super Admin seeded successfully:', result.rows[0]);
+    // Helpful indexes for the workflow's most common lookups
+    console.log('Creating indexes...');
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_teams_company ON teams(company_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_company ON projects(company_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_projects_client ON projects(client_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_clients_company ON clients(company_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);`);
+
+    console.log('Workflow schema migration completed successfully.');
   } catch (error) {
     console.error('Migration failed:', error);
     throw error;
@@ -61,7 +115,7 @@ async function migrate() {
 
 migrate()
   .then(() => {
-    console.log('Migration completed successfully.');
+    console.log('Done.');
     process.exit(0);
   })
   .catch((err) => {

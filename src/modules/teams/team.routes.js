@@ -23,7 +23,7 @@ router.get('/', async (req, res, next) => {
     const offset = (page - 1) * limit;
     const search = String(req.query.search || '').trim();
 
-    const where = ['company_id = $1'];
+    const where = ['t.company_id = $1'];
     const values = [req.company.id];
     if (search) {
       values.push(`%${search}%`);
@@ -40,7 +40,7 @@ router.get('/', async (req, res, next) => {
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, limit, offset]
     );
-    const count = await pool.query(`SELECT COUNT(*)::int AS total FROM teams ${whereClause}`, values);
+    const count = await pool.query(`SELECT COUNT(*)::int AS total FROM teams t ${whereClause}`, values);
 
     res.json({ success: true, data: teams.rows, pagination: { page, limit, total: count.rows[0].total } });
   } catch (error) {
