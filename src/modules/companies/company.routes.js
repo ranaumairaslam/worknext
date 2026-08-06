@@ -49,6 +49,36 @@ const authorizeRole = (...roles) => (req, res, next) => {
 // All routes below require a valid token + company context
 router.use(protect, loadCompany);
 
+// JWTs are stateless; the client removes its token after this acknowledgement.
+router.post('/logout', (req, res) => {
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// The meeting and notification modules are optional during initial company setup.
+// Keep their dashboard contracts stable until records are created by those modules.
+router.get('/meetings', (req, res) => {
+  res.json({ success: true, data: [] });
+});
+
+router.get('/notifications', (req, res) => {
+  res.json({ success: true, data: [] });
+});
+
+router.get('/performance', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS total_employees,
+              COUNT(*) FILTER (WHERE status = 'active')::int AS active_employees,
+              COUNT(*) FILTER (WHERE role = 'team_leader')::int AS team_leaders
+       FROM users WHERE company_id = $1`,
+      [req.company.id]
+    );
+    res.json({ success: true, data: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // =======================================================
 // PUBLIC-TO-COMPANY: PROFILE
 // =======================================================
@@ -207,7 +237,7 @@ router.get('/dashboard', async (req, res, next) => {
 // Mount sub-routers in workflow order:
 // Teams -> Projects -> Clients -> Reports
 // =======================================================
-router.use('/teams', require('../teams/team.routes'));
+router.use('/teams', require('./team.routes'));
 router.use('/projects', require('../projects/project.routes'));
 router.use('/employees', require('../employees/employee.routes'));
 router.use('/clients', require('../clients/client.routes'));

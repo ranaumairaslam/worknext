@@ -65,6 +65,18 @@ async function migrate() {
       );
     `);
 
+    // Existing installations can have an older projects table. Add the
+    // workflow columns before creating indexes or using dashboard queries.
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS start_date DATE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS due_date DATE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS end_date DATE;`);
+
     // TASKS table (used for progress monitoring in step 6)
     console.log('Ensuring tasks table exists...');
     await pool.query(`

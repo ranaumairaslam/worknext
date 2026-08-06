@@ -190,9 +190,9 @@ function validateEmail(email) {
 function getDashboardUrl(role) {
   switch (role) {
     case "team_leader":
-      return "/api/team-leader/dashboard";
+      return "/dashboard-leader";
     case "team_member":
-      return "/api/team-member/dashboard";
+      return "/dashboard-team-member";
     default:
       return "/";
   }
@@ -472,6 +472,28 @@ router.delete(
       }
 
       res.json({ success: true, message: "Team deleted" });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// DELETE /api/company/teams/employees/:employeeId - remove an employee account
+router.delete(
+  "/employees/:employeeId",
+  authorizeRole("company", "super_admin"),
+  async (req, res, next) => {
+    try {
+      const { rows } = await pool.query(
+        `DELETE FROM users
+         WHERE id = $1 AND company_id = $2 AND role IN ('team_member', 'team_leader')
+         RETURNING id`,
+        [req.params.employeeId, req.company.id],
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ success: false, message: "Employee not found" });
+      }
+      res.json({ success: true, message: "Employee deleted" });
     } catch (error) {
       next(error);
     }

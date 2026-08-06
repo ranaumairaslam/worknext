@@ -127,6 +127,78 @@ router.post('/companies', (req, res, next) => createCompanyWithRole(req, res, ne
 // POST /api/super-admin/team-leader-companies - Create a company and its team leader
 router.post('/team-leader-companies', (req, res, next) => createCompanyWithRole(req, res, next, 'team_leader'));
 
+// GET /api/super-admin/companies - data source for the company-management screen
+router.get('/companies', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.id, c.name, c.email AS company_email, c.phone, c.address, c.industry,
+             c.website, c.status, c.created_at,
+             u.id AS owner_id, u.name AS owner_name, u.email AS owner_email,
+             COUNT(members.id)::int AS employee_count
+      FROM companies c
+      LEFT JOIN users u ON u.id = c.owner_id
+      LEFT JOIN users members ON members.company_id = c.id
+      GROUP BY c.id, u.id, u.name, u.email
+      ORDER BY c.created_at DESC
+    `);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/super-admin/companies/:id - update the fields that are stored for a tenant
+router.patch('/companies/:id', async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { companyName, ownerName, phone, address, industry, website, status } = req.body;
+    const allowedStatuses = ['active', 'inactive'];
+    if (status && !allowedStatuses.includes(String(status).toLowerCase())) {
+      return res.status(400).json({ success: false, message: 'Status must be active or inactive.' });
+    }
+    await client.query('BEGIN');
+    const company = await client.query(
+      `UPDATE companies SET
+        name = COALESCE(NULLIF($1, ''), name),
+        phone = COALESCE($2, phone), address = COALESCE($3, address),
+        industry = COALESCE($4, industry), website = COALESCE($5, website),
+        status = COALESCE($6, status)
+       WHERE id = $7
+       RETURNING id, name, email, phone, address, industry, website, status, created_at`,
+      [companyName?.trim(), phone, address, industry, website, status?.toLowerCase(), req.params.id]
+    );
+    if (!company.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Company not found.' });
+    }
+    if (ownerName?.trim()) {
+      await client.query('UPDATE users SET name = $1 WHERE id = (SELECT owner_id FROM companies WHERE id = $2)', [ownerName.trim(), req.params.id]);
+    }
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Company updated successfully.', data: company.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /api/super-admin/companies/:id/status - quick account activation control
+router.patch('/companies/:id/status', async (req, res, next) => {
+  try {
+    const status = String(req.body.status || '').toLowerCase();
+    if (!['active', 'inactive'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Status must be active or inactive.' });
+    }
+    const { rows } = await pool.query('UPDATE companies SET status = $1 WHERE id = $2 RETURNING id, status', [status, req.params.id]);
+    if (!rows[0]) return res.status(404).json({ success: false, message: 'Company not found.' });
+    res.json({ success: true, data: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/super-admin/dashboard - Super Admin Dashboard stats
 router.get('/dashboard', async (req, res, next) => {
   try {
