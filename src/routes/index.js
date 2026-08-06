@@ -10,7 +10,7 @@ const companyRoutes = require('../modules/companies/company.routes');
 const teamLeaderRoutes = require('../modules/teams/team-leader.routes');
 const teamMemberRoutes = require('../modules/teams/team-member.routes');
 const clientUserRoutes = require('../modules/clients/client-user.routes');
-const projectProgressRoutes = require('../modules/company/project-progress.routes');
+const projectProgressRoutes = require('../modules/companies/project.progress.routes');
 
 // Mount Routes
 router.use('/auth', authRoutes);
