@@ -1,3 +1,60 @@
+const getLeaderTeam = async () => ({
+  id: 1,
+  name: "Default Team",
+});
+
+const getProjects = async () => [];
+const getMembers = async () => [];
+const getTaskSummary = async () => ({
+  total: 0,
+  pending: 0,
+  completed: 0,
+});
+const createNewTask = async (body, userId) => ({
+  id: Date.now(),
+  ...body,
+  createdBy: userId,
+  status: "pending",
+});
+const assignTaskToMember = async (taskId, assignedTo) => ({
+  taskId,
+  assignedTo,
+  status: "assigned",
+});
+const getTasks = async () => [];
+const getSubmittedTasks = async () => [];
+const approveTaskById = async (taskId) => ({ taskId, status: "approved" });
+const returnTask = async (taskId, reviewNote) => ({
+  taskId,
+  status: "revision",
+  reviewNote,
+});
+const getProgress = async () => ({ progress: 0 });
+const generateReport = async (userId, from, to) => ({
+  userId,
+  from,
+  to,
+  summary: {
+    totalTasks: 0,
+    completed: 0,
+  },
+});
+
+const sendNotImplemented = (res, message) => {
+  return res.status(501).json({
+    success: false,
+    message,
+  });
+};
+
+exports.addEmployeeToTeam = async (req, res) => {
+  return sendNotImplemented(res, "Add employee to team is not implemented yet.");
+};
+
+exports.updateTaskPriority = async (req, res) => {
+  return sendNotImplemented(res, "Update task priority is not implemented yet.");
+};
+
 // ===============================
 // Dashboard
 // ===============================
