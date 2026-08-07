@@ -1,5 +1,5 @@
 const express = require('express');
-const PDFDocument = require('pdfkit'); // npm install pdfkit
+//const PDFDocument = require('pdfkit'); // npm install pdfkit
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
 const authorize = require('../../middleware/role.middleware');
