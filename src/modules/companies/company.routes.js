@@ -1,3 +1,6 @@
+console.log("✅ company.routes.js loaded");
+
+
 const express = require('express');
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
@@ -207,12 +210,12 @@ router.get('/dashboard', async (req, res, next) => {
 // Mount sub-routers in workflow order:
 // Teams -> Projects -> Clients -> Reports
 // =======================================================
-router.use('/teams', require('../teams/team.routes'));
-router.use('/projects', require('../projects/project.routes'));
+router.use('/teams', require('./team.routes'));
+router.use('/projects', require('./project.routes'));
 router.use('/employees', require('../employees/employee.routes'));
-router.use('/clients', require('../clients/client.routes'));
+router.use('/clients', require('./client.routes'));
 router.use('/tasks', require('../tasks/task.routes'));
-router.use('/reports', require('../reports/report.routes'));
+router.use('/reports', require('./report.routes'));
 
 module.exports = router;
 module.exports.loadCompany = loadCompany;
