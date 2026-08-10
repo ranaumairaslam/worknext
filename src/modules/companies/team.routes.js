@@ -342,67 +342,89 @@ router.post(
 );
 
 // PUT /api/company/teams/:teamId/assign-leader - Promote existing user to team leader
+// PUT /api/company/teams/:teamId/assign-leader
 router.put(
   "/:teamId/assign-leader",
   authorizeRole("company", "super_admin"),
   async (req, res, next) => {
     const client = await pool.connect();
+
     try {
       const { userId } = req.body;
+      const { teamId } = req.params;
 
       if (!userId) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "userId is required to assign a team leader",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "userId is required",
+        });
       }
 
       await client.query("BEGIN");
 
+      // Check Team
       const team = await client.query(
-        "SELECT id FROM teams WHERE id = $1 AND company_id = $2",
-        [req.params.teamId, req.company.id],
+        `SELECT id, name
+         FROM teams
+         WHERE id = $1
+         AND company_id = $2`,
+        [teamId, req.company.id]
       );
-      if (!team.rows[0]) {
+
+      if (!team.rows.length) {
         await client.query("ROLLBACK");
-        return res
-          .status(404)
-          .json({ success: false, message: "Team not found" });
+        return res.status(404).json({
+          success: false,
+          message: "Team not found",
+        });
       }
 
+      // Check Employee
       const user = await client.query(
-        "SELECT id, name, email FROM users WHERE id = $1 AND company_id = $2",
-        [userId, req.company.id],
+        `SELECT id, name, email
+         FROM users
+         WHERE id = $1
+         AND company_id = $2`,
+        [userId, req.company.id]
       );
-      if (!user.rows[0]) {
+
+      if (!user.rows.length) {
         await client.query("ROLLBACK");
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message: "Employee not found in this company",
-          });
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found in this company",
+        });
       }
 
+      // Update Team Leader
       const updatedTeam = await client.query(
-        `UPDATE teams SET leader_id = $1, updated_at = NOW()
-       WHERE id = $2 RETURNING id, name, leader_id`,
-        [userId, req.params.teamId],
+        `UPDATE teams
+         SET leader_id = $1
+         WHERE id = $2
+         RETURNING id,
+                   name,
+                   leader_id`,
+        [userId, teamId]
       );
 
+      // Update User Role
       await client.query(
-        `UPDATE users SET role = 'team_leader', team_id = $1 WHERE id = $2`,
-        [req.params.teamId, userId],
+        `UPDATE users
+         SET role = 'team_leader',
+             team_id = $1
+         WHERE id = $2`,
+        [teamId, userId]
       );
 
       await client.query("COMMIT");
 
-      res.json({
+      return res.status(200).json({
         success: true,
-        message: `${user.rows[0].name} assigned as team leader`,
-        data: updatedTeam.rows[0],
+        message: `${user.rows[0].name} assigned as Team Leader successfully`,
+        data: {
+          team: updatedTeam.rows[0],
+          leader: user.rows[0],
+        },
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -410,72 +432,8 @@ router.put(
     } finally {
       client.release();
     }
-  },
+  }
 );
 
-// POST /api/company/teams/:teamId/members - Attach existing employee to a team
-router.post(
-  "/:teamId/members",
-  authorizeRole("company", "team_leader"),
-  async (req, res, next) => {
-    try {
-      const { userId } = req.body;
-
-      if (!userId) {
-        return res
-          .status(400)
-          .json({ success: false, message: "userId is required" });
-      }
-
-      const { rows } = await pool.query(
-        `UPDATE users SET team_id = $1, role = COALESCE(NULLIF(role, 'company'), 'team_member')
-       WHERE id = $2 AND company_id = $3
-       RETURNING id, name, email, role, team_id`,
-        [req.params.teamId, userId, req.company.id],
-      );
-
-      if (!rows[0]) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message: "Employee not found in this company",
-          });
-      }
-
-      res.json({
-        success: true,
-        message: "Member added to team",
-        data: rows[0],
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-// DELETE /api/company/teams/:teamId - Delete a team
-router.delete(
-  "/:teamId",
-  authorizeRole("company", "super_admin"),
-  async (req, res, next) => {
-    try {
-      const { rows } = await pool.query(
-        "DELETE FROM teams WHERE id = $1 AND company_id = $2 RETURNING id",
-        [req.params.teamId, req.company.id],
-      );
-
-      if (!rows[0]) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Team not found" });
-      }
-
-      res.json({ success: true, message: "Team deleted" });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
+     
 module.exports = router;

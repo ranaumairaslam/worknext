@@ -1,3 +1,6 @@
+console.log("✅ routes/index.js loaded");
+
+
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
@@ -7,8 +10,8 @@ const router = express.Router();
 const authRoutes = require('../modules/auth/auth.routes');
 const superAdminRoutes = require('../modules/super-admin/super-admin.routes');
 const companyRoutes = require('../modules/companies/company.routes');
-const teamLeaderRoutes = require('../modules/teams/team-leader.routes');
-const teamMemberRoutes = require('../modules/teams/team-member.routes');
+const teamLeaderRoutes = require('../modules/team-leader/teamleaderroutes');
+
 const clientUserRoutes = require('../modules/clients/client-user.routes');
 const projectProgressRoutes = require('../modules/companies/project.progress.routes');
 
@@ -18,7 +21,7 @@ router.use('/super-admin', superAdminRoutes);
 router.use('/company', companyRoutes);
 router.use('/company/projects', projectProgressRoutes);
 router.use('/team-leader', teamLeaderRoutes);
-router.use('/team-member', teamMemberRoutes);
+
 router.use('/client', clientUserRoutes);
 
 // Compatibility route
