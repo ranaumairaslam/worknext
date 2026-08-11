@@ -25,6 +25,11 @@ async function migrate() {
       );
     `);
 
+    // Upgrade older teams tables missing newer columns
+    await pool.query(`ALTER TABLE teams ADD COLUMN IF NOT EXISTS description TEXT;`);
+    await pool.query(`ALTER TABLE teams ADD COLUMN IF NOT EXISTS leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE teams ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
+
     // Make sure users table has team_id column (for step 3: assigning leader/members)
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;
