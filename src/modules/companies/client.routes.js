@@ -278,17 +278,16 @@ router.post("/", authorizeRole("company", "super_admin"), async (req, res, next)
 
     await db.query("COMMIT");
 
+    // Return ONLY the newly registered client (not the full clients list)
     return res.status(201).json({
       success: true,
       code: 201,
       message: "Client created successfully",
       companyId: req.company.id,
-      data: {
-        client: mapClientResponse(clientRows[0]),
-        login: {
-          email: userRows[0].email,
-          role: userRows[0].role,
-        },
+      data: mapClientResponse(clientRows[0]),
+      login: {
+        email: userRows[0].email,
+        role: userRows[0].role,
       },
     });
   } catch (error) {
