@@ -1,6 +1,4 @@
 const express = require("express");
-const crypto = require("crypto");
-const bcrypt = require("bcryptjs");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
 
@@ -47,16 +45,6 @@ const parseTeamId = (raw) => {
   if (!matched) return null;
   const id = Number.parseInt(matched[1], 10);
   return Number.isInteger(id) && id > 0 ? id : null;
-};
-
-const generateRandomPassword = (length = 12) => {
-  return crypto.randomBytes(length).toString("base64").slice(0, length);
-};
-
-const generateUniqueEmail = (name, companyId) => {
-  const sanitizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const uniqueTag = crypto.randomBytes(3).toString("hex");
-  return `${sanitizedName}.${uniqueTag}@company${companyId}.internal`;
 };
 
 async function loadCompany(req, res, next) {
@@ -275,6 +263,160 @@ router.post(
 );
 router.all("/create", methodNotAllowed(["POST"]));
 
+/**
+ * REGISTER / ASSIGN MEMBER TO TEAM
+ * POST /api/company/teams/register-member
+ * POST /api/company/teams/:teamId/register-member
+ *
+ * Input (only 2 fields):
+ * {
+ *   "TeamId": 15,
+ *   "EmployeeName": "Ali Raza"
+ * }
+ */
+async function registerMemberHandler(req, res, next) {
+  const client = await pool.connect();
+  try {
+    const body = req.body || {};
+    const employeeName =
+      body.EmployeeName ?? body.employeeName ?? body.name ?? null;
+    const bodyTeamId = parseTeamId(body.TeamId ?? body.teamId);
+    const pathTeamId = parseTeamId(req.params.teamId);
+
+    const errors = [];
+    if (!employeeName || !String(employeeName).trim()) {
+      errors.push({
+        field: "EmployeeName",
+        message: "EmployeeName is required",
+      });
+    }
+
+    const teamId = pathTeamId || bodyTeamId;
+    if (!teamId) {
+      errors.push({ field: "TeamId", message: "TeamId is required" });
+    }
+
+    if (
+      pathTeamId &&
+      bodyTeamId &&
+      Number(pathTeamId) !== Number(bodyTeamId)
+    ) {
+      errors.push({
+        field: "TeamId",
+        message: "TeamId in body must match TeamId in URL",
+      });
+    }
+
+    if (errors.length) {
+      return sendError(res, 400, "Validation failed", errors);
+    }
+
+    await client.query("BEGIN");
+
+    const teamCheck = await client.query(
+      `SELECT id, name FROM teams WHERE id = $1 AND company_id = $2`,
+      [teamId, req.company.id],
+    );
+    if (!teamCheck.rows[0]) {
+      await client.query("ROLLBACK");
+      return sendError(res, 404, "Team not found", [
+        { field: "TeamId", message: `No team found for TeamId ${teamId}` },
+      ]);
+    }
+
+    const employeeResult = await client.query(
+      `SELECT id, name, email, role, team_id, status
+       FROM users
+       WHERE company_id = $1
+         AND LOWER(name) = LOWER($2)
+         AND role IN ('team_member', 'team_leader', 'company')
+       ORDER BY id DESC
+       LIMIT 1`,
+      [req.company.id, String(employeeName).trim()],
+    );
+
+    const employee = employeeResult.rows[0];
+    if (!employee) {
+      await client.query("ROLLBACK");
+      return sendError(res, 404, "EmployeeName not found in your company", [
+        {
+          field: "EmployeeName",
+          message: `No employee found for "${String(employeeName).trim()}"`,
+        },
+      ]);
+    }
+
+    if (employee.role === "company" || employee.role === "super_admin") {
+      await client.query("ROLLBACK");
+      return sendError(
+        res,
+        400,
+        "Company admin cannot be registered as a team member",
+        [
+          {
+            field: "EmployeeName",
+            message: "Choose a team_member or team_leader employee",
+          },
+        ],
+      );
+    }
+
+    const { rows } = await client.query(
+      `UPDATE users
+       SET team_id = $1,
+           role = CASE
+             WHEN role = 'team_leader' THEN role
+             ELSE 'team_member'
+           END
+       WHERE id = $2 AND company_id = $3
+       RETURNING id, name, email, role, team_id, status, created_at`,
+      [teamId, employee.id, req.company.id],
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Employee assigned to team successfully",
+      data: {
+        TeamId: teamId,
+        teamName: teamCheck.rows[0].name,
+        EmployeeName: rows[0].name,
+        employeeId: rows[0].id,
+        email: rows[0].email,
+        role: rows[0].role,
+        team_id: rows[0].team_id,
+      },
+    });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  } finally {
+    client.release();
+  }
+}
+
+// Body style: { TeamId, EmployeeName }
+router.post(
+  "/register-member",
+  authorizeRole("company", "super_admin", "team_leader"),
+  registerMemberHandler,
+);
+router.all("/register-member", methodNotAllowed(["POST"]));
+
+// Path style: /api/company/teams/15/register-member
+router.post(
+  "/:teamId/register-member",
+  authorizeRole("company", "super_admin", "team_leader"),
+  registerMemberHandler,
+);
+router.all("/:teamId/register-member", methodNotAllowed(["POST"]));
+
 // =======================================================
 // GET / UPDATE / DELETE single team
 // URLs:
@@ -476,148 +618,6 @@ router.delete(
   "/:teamId",
   authorizeRole("company", "super_admin"),
   deleteTeamHandler,
-);
-
-// =======================================================
-// EMPLOYEE REGISTRATION & ROLE ASSIGNMENT
-// =======================================================
-
-function validateEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
-}
-
-function getDashboardUrl(role) {
-  switch (role) {
-    case "team_leader":
-      return "/api/team-leader/dashboard";
-    case "team_member":
-      return "/api/team-member/dashboard";
-    default:
-      return "/";
-  }
-}
-
-/**
- * POST /api/company/teams/:teamId/register-member
- */
-router.post(
-  "/:teamId/register-member",
-  authorizeRole("company", "super_admin", "team_leader"),
-  async (req, res, next) => {
-    const client = await pool.connect();
-    try {
-      const { name, email, password, role } = req.body || {};
-      const teamId = parseTeamId(req.params.teamId);
-      if (!teamId) {
-        return sendError(res, 400, "Invalid team id");
-      }
-
-      if (!name || !String(name).trim()) {
-        return sendError(res, 400, "Employee name is required");
-      }
-
-      if (email && !validateEmail(email)) {
-        return sendError(res, 400, "A valid email address is required");
-      }
-
-      const targetRole = role;
-      if (!targetRole || !["team_member", "team_leader"].includes(targetRole)) {
-        return sendError(
-          res,
-          400,
-          "Role must be 'team_member' or 'team_leader'",
-        );
-      }
-
-      await client.query("BEGIN");
-
-      const teamCheck = await client.query(
-        "SELECT id FROM teams WHERE id = $1 AND company_id = $2",
-        [teamId, req.company.id],
-      );
-      if (!teamCheck.rows[0]) {
-        await client.query("ROLLBACK");
-        return sendError(res, 404, "Team not found");
-      }
-
-      const userEmail = email
-        ? email.trim().toLowerCase()
-        : generateUniqueEmail(name, req.company.id);
-
-      const existingUser = await client.query(
-        "SELECT id FROM users WHERE email = $1",
-        [userEmail],
-      );
-      if (existingUser.rows[0]) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "A user with this email already exists");
-      }
-
-      if (password && String(password).trim().length < 6) {
-        await client.query("ROLLBACK");
-        return sendError(res, 400, "Password must be at least 6 characters long");
-      }
-
-      const plainPassword =
-        password && String(password).trim().length >= 6
-          ? String(password).trim()
-          : generateRandomPassword();
-
-      const hashedPassword = await bcrypt.hash(plainPassword, 10);
-
-      const newUser = await client.query(
-        `INSERT INTO users (company_id, team_id, name, email, password, role, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW())
-         RETURNING id, name, email, role, team_id, created_at`,
-        [
-          req.company.id,
-          teamId,
-          String(name).trim(),
-          userEmail,
-          hashedPassword,
-          targetRole,
-        ],
-      );
-
-      const registeredUser = newUser.rows[0];
-
-      if (targetRole === "team_leader") {
-        await client.query(
-          "UPDATE teams SET leader_id = $1, updated_at = NOW() WHERE id = $2",
-          [registeredUser.id, teamId],
-        );
-      }
-
-      await client.query("COMMIT");
-
-      return sendSuccess(
-        res,
-        201,
-        `Employee registered and assigned as ${targetRole}`,
-        {
-          user: registeredUser,
-          credentials: {
-            email: userEmail,
-            password: plainPassword,
-            dashboard: getDashboardUrl(targetRole),
-          },
-        },
-      );
-    } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } catch (_) {
-        /* ignore */
-      }
-      next(error);
-    } finally {
-      client.release();
-    }
-  },
-);
-router.all(
-  "/:teamId/register-member",
-  methodNotAllowed(["POST"]),
 );
 
 // PUT /api/company/teams/:teamId/assign-leader
