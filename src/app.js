@@ -11,7 +11,7 @@ const app = express();
 
 const allowedOrigins = (
   process.env.CLIENT_URL ||
-  'http://localhost:3000,http://127.0.0.1:3000'
+  'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
 )
   .split(',')
   .map(origin => origin.trim());
@@ -19,8 +19,11 @@ const allowedOrigins = (
 app.use(
   cors({
     origin(origin, callback) {
+      // No Origin header (Postman/curl) or an allow-listed origin → OK.
+      // Important: deny with callback(null, false) — never callback(new Error()),
+      // or Express turns it into a 500 for every browser request from another port.
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error('This origin is not allowed by CORS'));
+      return callback(null, false);
     },
     credentials: true,
   })

@@ -36,16 +36,35 @@ async function migrate() {
       CREATE TABLE IF NOT EXISTS clients (
         id SERIAL PRIMARY KEY,
         company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255),
         phone VARCHAR(50),
         company_name VARCHAR(255),
         address TEXT,
+        industry VARCHAR(255),
+        account_owner_name VARCHAR(255),
+        company_size VARCHAR(100),
+        revenue NUMERIC(14,2),
+        location VARCHAR(255),
         notes TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
+
+    // Upgrade older clients tables that were created without the newer columns
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone VARCHAR(50);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS address TEXT;`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry VARCHAR(255);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS account_owner_name VARCHAR(255);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS company_size VARCHAR(100);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS revenue NUMERIC(14,2);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS location VARCHAR(255);`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS notes TEXT;`);
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
 
     // PROJECTS table (Step 4 & 5: Create Project, Assign Project)
     console.log('Ensuring projects table exists...');
