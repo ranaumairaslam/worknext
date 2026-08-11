@@ -81,13 +81,27 @@ async function migrate() {
         description TEXT,
         client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
         team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+        project_leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         status VARCHAR(50) DEFAULT 'pending',
+        priority VARCHAR(50) DEFAULT 'medium',
         start_date DATE,
         due_date DATE,
+        end_date DATE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
+
+    // Upgrade older projects tables
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS description TEXT;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS priority VARCHAR(50) DEFAULT 'medium';`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS start_date DATE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS due_date DATE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS end_date DATE;`);
+    await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
 
     // TASKS table (used for progress monitoring in step 6)
     console.log('Ensuring tasks table exists...');
