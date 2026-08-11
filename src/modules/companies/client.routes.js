@@ -89,11 +89,31 @@ router.post('/clients', protect, authorize('company'), async (req, res, next) =>
 
     // 4. Create the initial project for this company, using the name given at registration
     const { rows: projectRows } = await client.query(
-      `INSERT INTO projects (company_id, name, description, status)
-       VALUES ($1, $2, $3, 'active')
-       RETURNING id, name, description, status, start_date, end_date, created_at`,
-      [companyId, project_name, project_description || null]
-    );
+  `INSERT INTO projects (
+     company_id,
+     client_id,
+     name,
+     description,
+     status
+   )
+   VALUES ($1, $2, $3, $4, 'active')
+   RETURNING
+     id,
+     name,
+     description,
+     status,
+     start_date,
+     end_date,
+     created_at`,
+  [
+    req.company.id,
+    clientRows[0].id,
+    project_name.trim(),
+    project_description
+      ? project_description.trim()
+      : null
+  ]
+);
     const newProject = projectRows[0];
 
     await client.query('COMMIT');
@@ -124,19 +144,27 @@ router.get('/dashboard', protect, authorize('client'), async (req, res, next) =>
     }
 
     const { rows: projects } = await pool.query(
-      `SELECT p.id, p.name, p.description, p.status, p.start_date, p.end_date, p.created_at,
-              COALESCE(
-                (SELECT pr.percentage
-                 FROM progress_reports pr
-                 WHERE pr.project_id = p.id
-                 ORDER BY pr.created_at DESC
-                 LIMIT 1), 0
-              ) AS latest_progress
-       FROM projects p
-       WHERE p.company_id = $1
-       ORDER BY p.created_at DESC`,
-      [client.company_id]
-    );
+  `SELECT
+      id,
+      client_id,
+      name,
+      description,
+      status,
+      start_date,
+      end_date,
+      created_at
+   FROM projects
+   WHERE company_id = $1
+   ORDER BY created_at DESC`,
+  [req.company.id]
+);
+
+const data = clients.rows.map((client) => ({
+  ...client,
+  projects: projects.filter(
+    (project) => project.client_id === client.id
+  ),
+}));
 
     res.json({
       success: true,
