@@ -495,11 +495,11 @@ router.get(
 );
 
 // =====================================================
-// GET / UPDATE SINGLE PROJECT
+// GET / UPDATE / DELETE SINGLE PROJECT
 // Supported URLs:
-//   GET|PUT|PATCH /api/company/projects/17
-//   GET|PUT|PATCH /api/company/projects/projectId/17
-//   GET|PUT|PATCH /api/company/projects/projectId:17
+//   GET|PUT|PATCH|DELETE /api/company/projects/17
+//   GET|PUT|PATCH|DELETE /api/company/projects/projectId/17
+//   GET|PUT|PATCH|DELETE /api/company/projects/projectId:17
 // =====================================================
 
 async function getProjectHandler(req, res, next) {
@@ -628,35 +628,122 @@ async function updateProjectHandler(req, res, next) {
   }
 }
 
+async function deleteProjectHandler(req, res, next) {
+  const db = await pool.connect();
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message:
+          "Invalid project id. Use /projects/projectId:2 or /projects/projectId/2",
+      });
+    }
+
+    const existing = await db.query(
+      `SELECT id, name, company_id, status, description
+       FROM projects
+       WHERE id = $1 AND company_id = $2`,
+      [projectId, req.company.id],
+    );
+
+    if (!existing.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Project not found for your company",
+      });
+    }
+
+    await db.query("BEGIN");
+
+    // Clean related rows that may not cascade automatically
+    try {
+      await db.query("SAVEPOINT sp_progress");
+      await db.query(`DELETE FROM progress_reports WHERE project_id = $1`, [
+        projectId,
+      ]);
+      await db.query("RELEASE SAVEPOINT sp_progress");
+    } catch (_) {
+      await db.query("ROLLBACK TO SAVEPOINT sp_progress");
+    }
+
+    const deleted = await db.query(
+      `DELETE FROM projects
+       WHERE id = $1 AND company_id = $2
+       RETURNING id, name, company_id, status, description`,
+      [projectId, req.company.id],
+    );
+
+    await db.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project deleted successfully",
+      data: {
+        id: deleted.rows[0].id,
+        projectName: deleted.rows[0].name,
+        description: deleted.rows[0].description,
+        ProjectStatus: deleted.rows[0].status,
+        companyId: deleted.rows[0].company_id,
+      },
+    });
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  } finally {
+    db.release();
+  }
+}
+
+const PROJECT_ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
+
 // Explicit style: /api/company/projects/projectId/17
 router.get("/projectId/:projectId", getProjectHandler);
 router.put(
   "/projectId/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
 );
 router.patch(
   "/projectId/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
+);
+router.delete(
+  "/projectId/:projectId",
+  authorizeRole("company", "super_admin"),
+  deleteProjectHandler,
 );
 router.all(
   "/projectId/:projectId",
-  methodNotAllowed(["GET", "PUT", "PATCH"]),
+  methodNotAllowed(PROJECT_ITEM_METHODS),
 );
 
-// Short style: /api/company/projects/17
-// Also supports /api/company/projects/projectId:17
+// Short / colon style:
+// /api/company/projects/17
+// /api/company/projects/projectId:2
 router.get("/:projectId", getProjectHandler);
 router.put(
   "/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
 );
 router.patch(
   "/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
+);
+router.delete(
+  "/:projectId",
+  authorizeRole("company", "super_admin"),
+  deleteProjectHandler,
 );
 
 // =====================================================
@@ -910,6 +997,6 @@ RETURNING *
 );
 
 // Method validation fallback for /:projectId (after nested routes)
-router.all("/:projectId", methodNotAllowed(["GET", "PUT", "PATCH"]));
+router.all("/:projectId", methodNotAllowed(PROJECT_ITEM_METHODS));
 
 module.exports = router;
