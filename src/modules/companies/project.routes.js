@@ -297,6 +297,67 @@ AND p.company_id=$2
 );
 
 // =====================================================
+// UPDATE PROJECT
+// PUT /api/company/projects/:projectId
+// =====================================================
+
+router.put(
+  "/:projectId",
+  authorizeRole("company", "super_admin"),
+  async (req, res, next) => {
+    try {
+      const { name, description, clientId, startDate, dueDate, status } = req.body;
+
+      if (name !== undefined && !String(name).trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Project name cannot be empty",
+        });
+      }
+
+      const project = await pool.query(
+        `
+        UPDATE projects SET
+          name = COALESCE(NULLIF($1, ''), name),
+          description = COALESCE($2, description),
+          client_id = COALESCE($3, client_id),
+          start_date = COALESCE($4, start_date),
+          due_date = COALESCE($5, due_date),
+          status = COALESCE(NULLIF($6, ''), status)
+        WHERE id = $7 AND company_id = $8
+        RETURNING *
+        `,
+        [
+          name !== undefined ? String(name).trim() : null,
+          description !== undefined ? description : null,
+          clientId !== undefined ? clientId : null,
+          startDate !== undefined ? startDate : null,
+          dueDate !== undefined ? dueDate : null,
+          status !== undefined ? status : null,
+          req.params.projectId,
+          req.company.id,
+        ],
+      );
+
+      if (!project.rows[0]) {
+        return res.status(404).json({
+          success: false,
+          message: "Project not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Project updated",
+        data: project.rows[0],
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// =====================================================
 // GET TEAM EMPLOYEES FOR PROJECT ASSIGN
 // =====================================================
 

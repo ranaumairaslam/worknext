@@ -127,6 +127,87 @@ router.post('/companies', (req, res, next) => createCompanyWithRole(req, res, ne
 // POST /api/super-admin/team-leader-companies - Create a company and its team leader
 router.post('/team-leader-companies', (req, res, next) => createCompanyWithRole(req, res, next, 'team_leader'));
 
+// GET /api/super-admin/companies/:companyId/clients
+// Super admin: list clients of any specific company
+router.get('/companies/:companyId/clients', async (req, res, next) => {
+  try {
+    const companyId = Number.parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid companyId',
+      });
+    }
+
+    const companyResult = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [companyId]
+    );
+
+    if (!companyResult.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         id,
+         company_id,
+         user_id,
+         name,
+         email,
+         company_name,
+         address,
+         industry,
+         account_owner_name,
+         company_size,
+         revenue,
+         location,
+         created_at,
+         updated_at
+       FROM clients
+       WHERE company_id = $1
+       ORDER BY created_at DESC`,
+      [companyId]
+    );
+
+    const clients = rows.map((row) => ({
+      id: row.id,
+      companyId: row.company_id,
+      userId: row.user_id,
+      companyName: row.company_name || row.name,
+      companyEmail: row.email,
+      address: row.address,
+      industry: row.industry,
+      AccountOwnerName: row.account_owner_name || row.name,
+      companySize: row.company_size,
+      revenu:
+        row.revenue !== null && row.revenue !== undefined
+          ? Number(row.revenue)
+          : null,
+      location: row.location,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Clients fetched successfully',
+      count: clients.length,
+      companyId,
+      company: companyResult.rows[0],
+      data: clients,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/super-admin/dashboard - Super Admin Dashboard stats
 router.get('/dashboard', async (req, res, next) => {
   try {
