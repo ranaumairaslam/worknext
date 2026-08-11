@@ -135,7 +135,7 @@ exports.viewTeamMembers = async (req, res) => {
     }
 
     const members = await getMembers(team.id);
-
+` `
     res.json({
       success: true,
       data: members,
