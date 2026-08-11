@@ -24,6 +24,8 @@ const {
   generateTeamReport,
 } = require("./teamleadercontroller");
 
+router.use(protect, authorize("team_leader"));
+
 // Test Route
 router.get("/test", (req, res) => {
   res.json({
@@ -33,107 +35,42 @@ router.get("/test", (req, res) => {
 });
 
 // Dashboard
-router.get(
-  "/dashboard",
-  protect,
-  authorize("team_leader"),
-  getDashboard
-);
+router.get("/dashboard", getDashboard);
 
 // View Assigned Projects
-router.get(
-  "/projects",
-  protect,
-  authorize("team_leader"),
-  viewAssignedProjects
-);
+router.get("/projects", viewAssignedProjects);
 
 // View Team Members
-router.get(
-  "/team-members",
-  protect,
-  authorize("team_leader"),
-  viewTeamMembers
-);
+router.get("/team-members", viewTeamMembers);
 
 // Add Employee to Team
-router.post(
-  "/team/members",
-  protect,
-  authorize("team_leader"),
-  addEmployeeToTeam
-);
+router.post("/team/members", addEmployeeToTeam);
 
 // Create Task
-router.post(
-  "/tasks",
-  protect,
-  authorize("team_leader"),
-  createTask
-);
+router.post("/tasks", createTask);
 
 // Assign Task
-router.put(
-  "/tasks/:taskId/assign",
-  protect,
-  authorize("team_leader"),
-  assignTask
-);
+router.put("/tasks/:taskId/assign", assignTask);
 
 // Update Task Priority
-router.put(
-  "/tasks/:taskId/priority",
-  protect,
-  authorize("team_leader"),
-  updateTaskPriority
-);
+router.put("/tasks/:taskId/priority", updateTaskPriority);
 
 // View Tasks
-router.get(
-  "/tasks",
-  protect,
-  authorize("team_leader"),
-  viewTasks
-);
+router.get("/tasks", viewTasks);
 
 // Review Submitted Tasks
-router.get(
-  "/tasks/submitted",
-  protect,
-  authorize("team_leader"),
-  reviewSubmittedTasks
-);
+router.get("/tasks/submitted", reviewSubmittedTasks);
 
 // Approve Task
-router.put(
-  "/tasks/:taskId/approve",
-  protect,
-  authorize("team_leader"),
-  approveTask
-);
+router.put("/tasks/:taskId/approve", approveTask);
 
 // Return Task for Revision
-router.put(
-  "/tasks/:taskId/revision",
-  protect,
-  authorize("team_leader"),
-  returnTaskForRevision
-);
+router.put("/tasks/:taskId/revision", returnTaskForRevision);
 
 // Monitor Progress
-router.get(
-  "/progress",
-  protect,
-  authorize("team_leader"),
-  monitorTeamProgress
-);
+router.get("/progress", monitorTeamProgress);
 
 // Generate Report
-router.get(
-  "/reports",
-  protect,
-  authorize("team_leader"),
-  generateTeamReport
-);
+router.get("/reports", generateTeamReport);
 
 module.exports = router;
