@@ -65,70 +65,266 @@ async function loadCompany(req, res, next) {
 
 router.use(protect, loadCompany);
 
+const ALLOWED_PROJECT_STATUSES = [
+  "pending",
+  "active",
+  "inactive",
+  "completed",
+  "on_hold",
+];
+const ALLOWED_PROJECT_PRIORITIES = ["low", "medium", "high", "urgent"];
+
+const sendError = (res, status, message, errors = null) => {
+  const payload = { success: false, code: status, message };
+  if (errors) payload.errors = errors;
+  return res.status(status).json(payload);
+};
+
+const pickCreateProjectBody = (body = {}) => ({
+  projectName: body.projectName ?? body.name,
+  description: body.description ?? body.descrioptin,
+  teamLeaderName: body.TeamLeaderName ?? body.teamLeaderName,
+  projectTeam: body.ProjectTeam ?? body.projectTeam,
+  projectStatus: body.ProjectStatus ?? body.projectStatus ?? body.status,
+  projectPriority:
+    body.ProjectPriority ??
+    body.ProjectPrority ??
+    body.projectPriority ??
+    body.priority,
+  date: body.date ?? body.dueDate ?? body.startDate,
+  clientName: body.clientName ?? body.ClientName,
+});
+
+function validateCreateProject(body) {
+  const data = pickCreateProjectBody(body);
+  const errors = [];
+
+  if (!data.projectName || !String(data.projectName).trim()) {
+    errors.push({ field: "projectName", message: "projectName is required" });
+  }
+  if (!data.description || !String(data.description).trim()) {
+    errors.push({ field: "description", message: "description is required" });
+  }
+  if (!data.teamLeaderName || !String(data.teamLeaderName).trim()) {
+    errors.push({
+      field: "TeamLeaderName",
+      message: "TeamLeaderName is required",
+    });
+  }
+  if (!data.projectTeam || !String(data.projectTeam).trim()) {
+    errors.push({ field: "ProjectTeam", message: "ProjectTeam is required" });
+  }
+  if (!data.projectStatus || !String(data.projectStatus).trim()) {
+    errors.push({
+      field: "ProjectStatus",
+      message: "ProjectStatus is required",
+    });
+  } else if (
+    !ALLOWED_PROJECT_STATUSES.includes(
+      String(data.projectStatus).trim().toLowerCase(),
+    )
+  ) {
+    errors.push({
+      field: "ProjectStatus",
+      message: `ProjectStatus must be one of: ${ALLOWED_PROJECT_STATUSES.join(", ")}`,
+    });
+  }
+  if (!data.projectPriority || !String(data.projectPriority).trim()) {
+    errors.push({
+      field: "ProjectPriority",
+      message: "ProjectPriority is required",
+    });
+  } else if (
+    !ALLOWED_PROJECT_PRIORITIES.includes(
+      String(data.projectPriority).trim().toLowerCase(),
+    )
+  ) {
+    errors.push({
+      field: "ProjectPriority",
+      message: `ProjectPriority must be one of: ${ALLOWED_PROJECT_PRIORITIES.join(", ")}`,
+    });
+  }
+  if (!data.date || !String(data.date).trim()) {
+    errors.push({ field: "date", message: "date is required" });
+  } else if (Number.isNaN(Date.parse(String(data.date))) ) {
+    errors.push({ field: "date", message: "date must be a valid date" });
+  }
+  if (!data.clientName || !String(data.clientName).trim()) {
+    errors.push({ field: "clientName", message: "clientName is required" });
+  }
+
+  return { data, errors };
+}
+
 // =====================================================
 // CREATE PROJECT
+// POST /api/company/projects
+// Body: projectName, description, TeamLeaderName, ProjectTeam,
+//       ProjectStatus, ProjectPriority, date, clientName
 // =====================================================
 
 router.post(
   "/",
-  authorizeRole("company", "super_admin"),
-
+  authorizeRole("company", "super_admin", "team_leader"),
   async (req, res, next) => {
+    const client = await pool.connect();
     try {
-      const { name, description, clientId, startDate, dueDate } = req.body;
-
-      if (!name) {
-        return res.status(400).json({
-          success: false,
-          message: "Project name required",
-        });
+      const { data, errors } = validateCreateProject(req.body);
+      if (errors.length) {
+        return sendError(res, 400, "Validation failed", errors);
       }
 
-      const project = await pool.query(
+      const projectName = String(data.projectName).trim();
+      const description = String(data.description).trim();
+      const teamLeaderName = String(data.teamLeaderName).trim();
+      const projectTeam = String(data.projectTeam).trim();
+      const projectStatus = String(data.projectStatus).trim().toLowerCase();
+      const projectPriority = String(data.projectPriority).trim().toLowerCase();
+      const projectDate = String(data.date).trim();
+      const clientName = String(data.clientName).trim();
+
+      await client.query("BEGIN");
+
+      // Resolve team by id or name (within company)
+      let team;
+      const teamIdCandidate = Number.parseInt(projectTeam, 10);
+      if (Number.isInteger(teamIdCandidate) && String(teamIdCandidate) === projectTeam) {
+        const teamById = await client.query(
+          `SELECT id, name, leader_id FROM teams WHERE id = $1 AND company_id = $2`,
+          [teamIdCandidate, req.company.id],
+        );
+        team = teamById.rows[0];
+      } else {
+        const teamByName = await client.query(
+          `SELECT id, name, leader_id FROM teams
+           WHERE company_id = $1 AND LOWER(name) = LOWER($2)
+           ORDER BY id DESC LIMIT 1`,
+          [req.company.id, projectTeam],
+        );
+        team = teamByName.rows[0];
+      }
+
+      if (!team) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "ProjectTeam not found in your company", [
+          { field: "ProjectTeam", message: `No team found for "${projectTeam}"` },
+        ]);
+      }
+
+      // Resolve team leader by name (within company)
+      const leaderResult = await client.query(
+        `SELECT id, name, email, role, team_id FROM users
+         WHERE company_id = $1
+           AND LOWER(name) = LOWER($2)
+           AND role IN ('team_leader', 'team_member', 'company')
+         ORDER BY id DESC LIMIT 1`,
+        [req.company.id, teamLeaderName],
+      );
+      const leader = leaderResult.rows[0];
+      if (!leader) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "TeamLeaderName not found in your company", [
+          {
+            field: "TeamLeaderName",
+            message: `No employee found for "${teamLeaderName}"`,
+          },
+        ]);
+      }
+
+      // Resolve client by name / company_name (within company)
+      const clientResult = await client.query(
+        `SELECT id, name, company_name, email FROM clients
+         WHERE company_id = $1
+           AND (
+             LOWER(name) = LOWER($2)
+             OR LOWER(COALESCE(company_name, '')) = LOWER($2)
+           )
+         ORDER BY id DESC LIMIT 1`,
+        [req.company.id, clientName],
+      );
+      const linkedClient = clientResult.rows[0];
+      if (!linkedClient) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "clientName not found in your company", [
+          { field: "clientName", message: `No client found for "${clientName}"` },
+        ]);
+      }
+
+      // Attach leader to team. Never demote a company/super_admin account.
+      if (leader.role === "company" || leader.role === "super_admin") {
+        // Keep company admin role; only set as project leader + team leader_id
+        await client.query(
+          `UPDATE teams SET leader_id = $1, updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [leader.id, team.id, req.company.id],
+        );
+      } else {
+        await client.query(
+          `UPDATE users
+           SET role = 'team_leader', team_id = $1
+           WHERE id = $2 AND company_id = $3`,
+          [team.id, leader.id, req.company.id],
+        );
+        await client.query(
+          `UPDATE teams SET leader_id = $1, updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [leader.id, team.id, req.company.id],
+        );
+      }
+
+      const { rows } = await client.query(
         `
-
-INSERT INTO projects
-
-(
-company_id,
-name,
-description,
-client_id,
-status,
-start_date,
-due_date,
-created_at
-)
-
-
-VALUES
-
-($1,$2,$3,$4,'pending',$5,$6,NOW())
-
-
-RETURNING *
-
-`,
-
+        INSERT INTO projects (
+          company_id, name, description, client_id, team_id, project_leader_id,
+          status, priority, start_date, due_date, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,NOW())
+        RETURNING *
+        `,
         [
           req.company.id,
-          name,
-          description || null,
-          clientId || null,
-          startDate || null,
-          dueDate || null,
+          projectName,
+          description,
+          linkedClient.id,
+          team.id,
+          leader.id,
+          projectStatus,
+          projectPriority,
+          projectDate,
         ],
       );
 
-      res.status(201).json({
+      await client.query("COMMIT");
+
+      return res.status(201).json({
         success: true,
-
-        message: "Project created",
-
-        data: project.rows[0],
+        code: 201,
+        message: "Project created successfully",
+        data: {
+          id: rows[0].id,
+          projectName: rows[0].name,
+          description: rows[0].description,
+          ProjectStatus: rows[0].status,
+          ProjectPriority: rows[0].priority,
+          date: rows[0].due_date,
+          TeamLeaderName: leader.name,
+          teamLeaderId: leader.id,
+          ProjectTeam: team.name,
+          teamId: team.id,
+          clientName: linkedClient.company_name || linkedClient.name,
+          clientId: linkedClient.id,
+          companyId: rows[0].company_id,
+          createdAt: rows[0].created_at,
+        },
       });
     } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        /* ignore */
+      }
       next(error);
+    } finally {
+      client.release();
     }
   },
 );
@@ -182,19 +378,20 @@ router.get("/", async (req, res, next) => {
       SELECT
         p.id,
         p.company_id,
-        p.name,
+        p.name AS "projectName",
         p.description,
-        p.status,
+        p.status AS "ProjectStatus",
+        p.priority AS "ProjectPriority",
         p.client_id,
         p.team_id,
         p.project_leader_id,
         p.start_date,
-        p.due_date,
+        p.due_date AS date,
         p.end_date,
         p.created_at,
-        t.name AS team_name,
-        u.name AS project_leader_name,
-        cl.name AS client_name,
+        t.name AS "ProjectTeam",
+        u.name AS "TeamLeaderName",
+        cl.name AS "clientName",
         cl.company_name AS client_company_name
       FROM projects p
       LEFT JOIN teams t ON t.id = p.team_id
