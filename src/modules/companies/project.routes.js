@@ -231,15 +231,20 @@ router.post(
         ]);
       }
 
-      // Resolve client by name / company_name (within company)
+      // Resolve client by name / company_name / account owner / linked user
       const clientResult = await client.query(
-        `SELECT id, name, company_name, email FROM clients
-         WHERE company_id = $1
+        `SELECT c.id, c.name, c.company_name, c.email
+         FROM clients c
+         LEFT JOIN users u ON u.id = c.user_id
+         WHERE c.company_id = $1
            AND (
-             LOWER(name) = LOWER($2)
-             OR LOWER(COALESCE(company_name, '')) = LOWER($2)
+             LOWER(c.name) = LOWER($2)
+             OR LOWER(COALESCE(c.company_name, '')) = LOWER($2)
+             OR LOWER(COALESCE(c.email, '')) = LOWER($2)
+             OR LOWER(COALESCE(c.account_owner_name, '')) = LOWER($2)
+             OR LOWER(COALESCE(u.name, '')) = LOWER($2)
            )
-         ORDER BY id DESC LIMIT 1`,
+         ORDER BY c.id DESC LIMIT 1`,
         [req.company.id, clientName],
       );
       const linkedClient = clientResult.rows[0];
@@ -745,6 +750,230 @@ router.delete(
   authorizeRole("company", "super_admin"),
   deleteProjectHandler,
 );
+
+// =====================================================
+// PROJECT TASKS CRUD
+// /api/company/projects/15/tasks
+// /api/company/projects/projectId/15/tasks
+// /api/company/projects/15/tasks/12
+// =====================================================
+const taskRouteHandlers = require("../tasks/task.routes").handlers;
+const TASK_COLLECTION_METHODS = ["GET", "POST"];
+const TASK_ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
+
+const withParsedProjectId = (handler) => (req, res, next) => {
+  const projectId = parseProjectId(req.params.projectId);
+  if (!projectId) {
+    return sendError(res, 400, "Invalid project id", [
+      {
+        field: "projectId",
+        message: "Use /projects/15/tasks or /projects/projectId/15/tasks",
+      },
+    ]);
+  }
+  req.params.projectId = String(projectId);
+  return handler(req, res, next, projectId);
+};
+
+const getProjectTasksHandler = withParsedProjectId((req, res, next, projectId) =>
+  taskRouteHandlers.listTasksForProject(req, res, next, projectId),
+);
+
+const createProjectTaskHandler = withParsedProjectId((req, res, next, projectId) =>
+  taskRouteHandlers.createTaskForProject(req, res, next, projectId),
+);
+
+const getOneProjectTaskHandler = withParsedProjectId(async (req, res, next, projectId) => {
+  try {
+    const taskId = taskRouteHandlers.parseId(req.params.taskId, "taskId");
+    if (!taskId) {
+      return sendError(res, 400, "Invalid task id");
+    }
+
+    const { rows } = await pool.query(
+      `SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date,
+              t.project_id, t.assignee_id, t.created_at,
+              u.name AS assignee_name, u.email AS assignee_email
+       FROM tasks t
+       LEFT JOIN users u ON u.id = t.assignee_id
+       WHERE t.id = $1 AND t.project_id = $2 AND t.company_id = $3`,
+      [taskId, projectId, req.company.id],
+    );
+
+    if (!rows[0]) {
+      return sendError(res, 404, "Task not found for this project");
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Task fetched successfully",
+      projectId,
+      data: rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const updateProjectTaskHandler = withParsedProjectId((req, res, next) =>
+  taskRouteHandlers.updateTaskHandler(req, res, next),
+);
+
+const deleteProjectTaskHandler = withParsedProjectId((req, res, next) =>
+  taskRouteHandlers.deleteTaskHandler(req, res, next),
+);
+
+const canManageProjectTasks = authorizeRole(
+  "company",
+  "super_admin",
+  "team_leader",
+);
+
+// =====================================================
+// GET CLIENT FOR A SPECIFIC PROJECT
+// GET /api/company/projects/15/client
+// GET /api/company/projects/projectId/15/client
+// =====================================================
+async function getProjectClientHandler(req, res, next) {
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return sendError(res, 400, "Invalid project id", [
+        {
+          field: "projectId",
+          message: "Use /projects/15/client or /projects/projectId/15/client",
+        },
+      ]);
+    }
+
+    const project = await pool.query(
+      `SELECT id, name, client_id, status
+       FROM projects
+       WHERE id = $1 AND company_id = $2`,
+      [projectId, req.company.id],
+    );
+
+    if (!project.rows[0]) {
+      return sendError(res, 404, "Project not found");
+    }
+
+    if (!project.rows[0].client_id) {
+      return sendError(res, 404, "No client assigned to this project", [
+        {
+          field: "client_id",
+          message: "This project does not have a linked client",
+        },
+      ]);
+    }
+
+    const client = await pool.query(
+      `
+      SELECT
+        c.id,
+        c.company_id,
+        c.user_id,
+        c.name,
+        c.email,
+        c.company_name AS "companyName",
+        c.address,
+        c.industry,
+        c.account_owner_name AS "AccountOwnerName",
+        c.company_size AS "companySize",
+        c.revenue AS revenu,
+        c.location,
+        c.phone,
+        c.notes,
+        c.created_at,
+        c.updated_at
+      FROM clients c
+      WHERE c.id = $1 AND c.company_id = $2
+      `,
+      [project.rows[0].client_id, req.company.id],
+    );
+
+    if (!client.rows[0]) {
+      return sendError(res, 404, "Client not found for this project");
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project client fetched successfully",
+      projectId,
+      project: {
+        id: project.rows[0].id,
+        name: project.rows[0].name,
+        status: project.rows[0].status,
+      },
+      data: client.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/projectId/:projectId/client", getProjectClientHandler);
+router.all("/projectId/:projectId/client", methodNotAllowed(["GET"]));
+
+router.get("/:projectId/client", getProjectClientHandler);
+router.all("/:projectId/client", methodNotAllowed(["GET"]));
+
+// Collection: list + create
+router.get("/projectId/:projectId/tasks", getProjectTasksHandler);
+router.post(
+  "/projectId/:projectId/tasks",
+  canManageProjectTasks,
+  createProjectTaskHandler,
+);
+router.all(
+  "/projectId/:projectId/tasks",
+  methodNotAllowed(TASK_COLLECTION_METHODS),
+);
+
+router.get("/:projectId/tasks", getProjectTasksHandler);
+router.post("/:projectId/tasks", canManageProjectTasks, createProjectTaskHandler);
+router.all("/:projectId/tasks", methodNotAllowed(TASK_COLLECTION_METHODS));
+
+// Item: get + edit + delete
+router.get("/projectId/:projectId/tasks/:taskId", getOneProjectTaskHandler);
+router.put(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.patch(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.delete(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  deleteProjectTaskHandler,
+);
+router.all(
+  "/projectId/:projectId/tasks/:taskId",
+  methodNotAllowed(TASK_ITEM_METHODS),
+);
+
+router.get("/:projectId/tasks/:taskId", getOneProjectTaskHandler);
+router.put(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.patch(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.delete(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  deleteProjectTaskHandler,
+);
+router.all("/:projectId/tasks/:taskId", methodNotAllowed(TASK_ITEM_METHODS));
 
 // =====================================================
 // GET TEAM EMPLOYEES FOR PROJECT ASSIGN
