@@ -4,6 +4,16 @@ const protect = require("../../middleware/auth.middleware");
 
 const router = express.Router({ mergeParams: true });
 
+// this route is used to get the dashboard for the project
+// it will return the dashboard for the project
+// it will return the meetings for the project
+// it will return the projects for the project
+// it will return the tasks for the project
+// it will return the clients for the project
+// it will return the companies for the project
+// it will return the users for the project
+// it will return the roles for the project
+
 const authorizeRole = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
