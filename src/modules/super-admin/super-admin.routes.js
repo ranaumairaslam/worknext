@@ -256,6 +256,156 @@ router.patch("/companies/:id/status", async (req, res, next) => {
   }
 });
 
+// GET /api/super-admin/companies/:companyId/clients
+// Super admin: list clients of any specific company
+router.get('/companies/:companyId/clients', async (req, res, next) => {
+  try {
+    const companyId = Number.parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid companyId',
+      });
+    }
+
+    const companyResult = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [companyId]
+    );
+
+    if (!companyResult.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         id,
+         company_id,
+         user_id,
+         name,
+         email,
+         company_name,
+         address,
+         industry,
+         account_owner_name,
+         company_size,
+         revenue,
+         location,
+         created_at,
+         updated_at
+       FROM clients
+       WHERE company_id = $1
+       ORDER BY created_at DESC`,
+      [companyId]
+    );
+
+    const clients = rows.map((row) => ({
+      id: row.id,
+      companyId: row.company_id,
+      userId: row.user_id,
+      companyName: row.company_name || row.name,
+      companyEmail: row.email,
+      address: row.address,
+      industry: row.industry,
+      AccountOwnerName: row.account_owner_name || row.name,
+      companySize: row.company_size,
+      revenu:
+        row.revenue !== null && row.revenue !== undefined
+          ? Number(row.revenue)
+          : null,
+      location: row.location,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Clients fetched successfully',
+      count: clients.length,
+      companyId,
+      company: companyResult.rows[0],
+      data: clients,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/super-admin/companies/:companyId/projects
+// Super admin: list projects of any specific company
+router.get('/companies/:companyId/projects', async (req, res, next) => {
+  try {
+    const companyId = Number.parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid companyId',
+      });
+    }
+
+    const companyResult = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [companyId]
+    );
+
+    if (!companyResult.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT
+        p.id,
+        p.company_id,
+        p.name,
+        p.description,
+        p.status,
+        p.client_id,
+        p.team_id,
+        p.project_leader_id,
+        p.start_date,
+        p.due_date,
+        p.end_date,
+        p.created_at,
+        t.name AS team_name,
+        u.name AS project_leader_name,
+        cl.name AS client_name,
+        cl.company_name AS client_company_name
+      FROM projects p
+      LEFT JOIN teams t ON t.id = p.team_id
+      LEFT JOIN users u ON u.id = p.project_leader_id
+      LEFT JOIN clients cl ON cl.id = p.client_id
+      WHERE p.company_id = $1
+      ORDER BY p.created_at DESC
+      `,
+      [companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Projects fetched successfully',
+      count: rows.length,
+      companyId,
+      company: companyResult.rows[0],
+      data: rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/super-admin/dashboard - Super Admin Dashboard stats
 router.get("/dashboard", async (req, res, next) => {
   try {

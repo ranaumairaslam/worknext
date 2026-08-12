@@ -9,12 +9,31 @@ const authorizeRole = (...roles) => {
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
+        code: 403,
         message: "You do not have access",
       });
     }
 
     next();
   };
+};
+
+const methodNotAllowed = (allowed) => (req, res) => {
+  res.set("Allow", allowed.join(", "));
+  return res.status(405).json({
+    success: false,
+    code: 405,
+    message: `Method ${req.method} not allowed. Allowed: ${allowed.join(", ")}`,
+  });
+};
+
+// Accepts: "17" | "projectId:17" | "projectId/17" style values
+const parseProjectId = (raw) => {
+  const value = String(raw || "").trim();
+  const matched = value.match(/^(?:projectId[:/])?(\d+)$/i);
+  if (!matched) return null;
+  const id = Number.parseInt(matched[1], 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
 };
 
 async function loadCompany(req, res, next) {
@@ -115,58 +134,99 @@ RETURNING *
 );
 
 // =====================================================
-// GET ALL PROJECTS
+// GET ALL PROJECTS for a company
+// GET /api/company/projects
+// GET /api/company/projects?companyId=15
+// Company role can only query their own companyId.
 // =====================================================
 
 router.get("/", async (req, res, next) => {
   try {
+    let targetCompanyId = req.company.id;
+
+    if (req.query.companyId !== undefined && req.query.companyId !== "") {
+      const requestedId = Number.parseInt(req.query.companyId, 10);
+      if (!Number.isInteger(requestedId) || requestedId <= 0) {
+        return res.status(400).json({
+          success: false,
+          code: 400,
+          message: "Invalid companyId",
+        });
+      }
+
+      if (req.user.role === "company" && requestedId !== Number(req.company.id)) {
+        return res.status(403).json({
+          success: false,
+          code: 403,
+          message: "You can only view projects of your own company",
+        });
+      }
+
+      targetCompanyId = requestedId;
+    }
+
+    const companyCheck = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [targetCompanyId],
+    );
+    if (!companyCheck.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Company not found",
+      });
+    }
+
     const projects = await pool.query(
       `
-
-SELECT
-
-p.*,
-
-t.name AS team_name,
-
-u.name AS project_leader_name
-
-
-FROM projects p
-
-
-LEFT JOIN teams t
-
-ON t.id=p.team_id
-
-
-
-LEFT JOIN users u
-
-ON u.id=p.project_leader_id
-
-
-
-WHERE p.company_id=$1
-
-
-ORDER BY p.created_at DESC
-
-
-`,
-
-      [req.company.id],
+      SELECT
+        p.id,
+        p.company_id,
+        p.name,
+        p.description,
+        p.status,
+        p.client_id,
+        p.team_id,
+        p.project_leader_id,
+        p.start_date,
+        p.due_date,
+        p.end_date,
+        p.created_at,
+        t.name AS team_name,
+        u.name AS project_leader_name,
+        cl.name AS client_name,
+        cl.company_name AS client_company_name
+      FROM projects p
+      LEFT JOIN teams t ON t.id = p.team_id
+      LEFT JOIN users u ON u.id = p.project_leader_id
+      LEFT JOIN clients cl ON cl.id = p.client_id
+      WHERE p.company_id = $1
+      ORDER BY p.created_at DESC
+      `,
+      [targetCompanyId],
     );
 
-    res.json({
+    return res.status(200).json({
       success: true,
-
+      code: 200,
+      message: "Projects fetched successfully",
+      count: projects.rows.length,
+      companyId: targetCompanyId,
+      company: {
+        id: companyCheck.rows[0].id,
+        name: companyCheck.rows[0].name,
+        email: companyCheck.rows[0].email,
+        status: companyCheck.rows[0].status,
+      },
       data: projects.rows,
     });
   } catch (error) {
     next(error);
   }
 });
+
+// Method validation for collection route
+router.all("/", methodNotAllowed(["GET", "POST"]));
 
 // =====================================================
 // TEAM LEADER DASHBOARD — projects led by logged-in user
@@ -238,62 +298,168 @@ router.get(
 );
 
 // =====================================================
-// GET SINGLE PROJECT
+// GET / UPDATE SINGLE PROJECT
+// Supported URLs:
+//   GET|PUT|PATCH /api/company/projects/17
+//   GET|PUT|PATCH /api/company/projects/projectId/17
+//   GET|PUT|PATCH /api/company/projects/projectId:17
 // =====================================================
 
-router.get(
-  "/:projectId",
-
-  async (req, res, next) => {
-    try {
-      const project = await pool.query(
-        `
-
-SELECT
-
-p.*,
-
-t.name AS team_name,
-
-u.name AS project_leader
-
-
-FROM projects p
-
-
-LEFT JOIN teams t
-ON t.id=p.team_id
-
-
-LEFT JOIN users u
-ON u.id=p.project_leader_id
-
-
-WHERE p.id=$1
-AND p.company_id=$2
-
-
-`,
-
-        [req.params.projectId, req.company.id],
-      );
-
-      if (!project.rows[0]) {
-        return res.status(404).json({
-          success: false,
-          message: "Project not found",
-        });
-      }
-
-      res.json({
-        success: true,
-
-        data: project.rows[0],
+async function getProjectHandler(req, res, next) {
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: "Invalid project id. Use /projects/17 or /projects/projectId/17",
       });
-    } catch (error) {
-      next(error);
     }
-  },
+
+    const project = await pool.query(
+      `
+      SELECT
+        p.*,
+        t.name AS team_name,
+        u.name AS project_leader
+      FROM projects p
+      LEFT JOIN teams t ON t.id = p.team_id
+      LEFT JOIN users u ON u.id = p.project_leader_id
+      WHERE p.id = $1 AND p.company_id = $2
+      `,
+      [projectId, req.company.id],
+    );
+
+    if (!project.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Project not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project fetched successfully",
+      data: project.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateProjectHandler(req, res, next) {
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: "Invalid project id. Use /projects/17 or /projects/projectId/17",
+      });
+    }
+
+    const { name, description, clientId, startDate, dueDate, status } =
+      req.body || {};
+
+    const hasAnyField = [
+      name,
+      description,
+      clientId,
+      startDate,
+      dueDate,
+      status,
+    ].some((value) => value !== undefined);
+    if (!hasAnyField) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message:
+          "Provide at least one field to update: name, description, clientId, startDate, dueDate, status",
+      });
+    }
+
+    if (name !== undefined && !String(name).trim()) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: "Project name cannot be empty",
+      });
+    }
+
+    const project = await pool.query(
+      `
+      UPDATE projects SET
+        name = COALESCE(NULLIF($1, ''), name),
+        description = COALESCE($2, description),
+        client_id = COALESCE($3, client_id),
+        start_date = COALESCE($4, start_date),
+        due_date = COALESCE($5, due_date),
+        status = COALESCE(NULLIF($6, ''), status)
+      WHERE id = $7 AND company_id = $8
+      RETURNING *
+      `,
+      [
+        name !== undefined ? String(name).trim() : null,
+        description !== undefined ? description : null,
+        clientId !== undefined ? clientId : null,
+        startDate !== undefined ? startDate : null,
+        dueDate !== undefined ? dueDate : null,
+        status !== undefined ? status : null,
+        projectId,
+        req.company.id,
+      ],
+    );
+
+    if (!project.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Project not found for your company",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project updated successfully",
+      data: project.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Explicit style: /api/company/projects/projectId/17
+router.get("/projectId/:projectId", getProjectHandler);
+router.put(
+  "/projectId/:projectId",
+  authorizeRole("company", "super_admin"),
+  updateProjectHandler,
+);
+router.patch(
+  "/projectId/:projectId",
+  authorizeRole("company", "super_admin"),
+  updateProjectHandler,
+);
+router.all(
+  "/projectId/:projectId",
+  methodNotAllowed(["GET", "PUT", "PATCH"]),
+);
+
+// Short style: /api/company/projects/17
+// Also supports /api/company/projects/projectId:17
+router.get("/:projectId", getProjectHandler);
+router.put(
+  "/:projectId",
+  authorizeRole("company", "super_admin"),
+  updateProjectHandler,
+);
+router.patch(
+  "/:projectId",
+  authorizeRole("company", "super_admin"),
+  updateProjectHandler,
 );
 
 // =====================================================
@@ -545,5 +711,8 @@ RETURNING *
     }
   },
 );
+
+// Method validation fallback for /:projectId (after nested routes)
+router.all("/:projectId", methodNotAllowed(["GET", "PUT", "PATCH"]));
 
 module.exports = router;

@@ -1,4 +1,9 @@
 module.exports = function (err, req, res, next) {
   console.error(err.stack);
-  res.status(500).json({ success: false, message: 'Something went wrong' });
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    success: false,
+    code: status,
+    message: status === 500 ? 'Something went wrong' : err.message || 'Request failed',
+  });
 };
