@@ -7,6 +7,23 @@ const router = express.Router();
 
 // GET /api/client-dashboard/dashboard
 // mapped to /api/client/dashboard
+// this route is used to get the dashboard for the client
+// it will return the dashboard for the client
+// it will return the meetings for the client
+// it will return the projects for the client
+// it will return the tasks for the client
+// it will return the clients for the client
+// it will return the companies for the client
+// it will return the users for the client
+// it will return the roles for the client
+// it will return the permissions for the client
+// it will return the settings for the client
+// it will return the notifications for the client
+// it will return the messages for the client
+// it will return the files for the client
+// it will return the folders for the client
+// it will return the tags for the client
+// it will return the labels for the client
 router.get(
   '/dashboard',
   protect,
