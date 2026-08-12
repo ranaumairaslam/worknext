@@ -88,9 +88,12 @@ async function migrate() {
         description TEXT,
         client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
         team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+        project_leader_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         status VARCHAR(50) DEFAULT 'pending',
+        priority VARCHAR(50) DEFAULT 'medium',
         start_date DATE,
         due_date DATE,
+        end_date DATE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
@@ -153,7 +156,77 @@ async function migrate() {
         amount NUMERIC(14,2) NOT NULL,
         source VARCHAR(255),
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+        revenue_date DATE,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS source VARCHAR(255);`);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS revenue_date DATE;`);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';`);
+    await pool.query(`ALTER TABLE revenues ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_revenues_company ON revenues(company_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_revenues_project ON revenues(project_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_revenues_client ON revenues(client_id);`);
+
+    // MEETINGS table (scheduled meetings)
+    console.log('Ensuring meetings tables exist...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS meetings (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        to_whom VARCHAR(255),
+        invitee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+        scheduled_date DATE,
+        scheduled_time TIME,
+        scheduled_at TIMESTAMP WITH TIME ZONE,
+        mode VARCHAR(50) DEFAULT 'online',
+        meeting_link TEXT,
+        status VARCHAR(50) DEFAULT 'scheduled',
+        description TEXT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS to_whom VARCHAR(255);`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS invitee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;`);
+    // Older meetings tables required client_id; company scheduling may not have a client
+    await pool.query(`ALTER TABLE meetings ALTER COLUMN client_id DROP NOT NULL;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS scheduled_date DATE;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS scheduled_time TIME;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS mode VARCHAR(50) DEFAULT 'online';`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meeting_link TEXT;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'scheduled';`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS description TEXT;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS meeting_teams (
+        meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        PRIMARY KEY (meeting_id, team_id)
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS meeting_members (
+        meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invited_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        PRIMARY KEY (meeting_id, user_id)
       );
     `);
 

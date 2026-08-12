@@ -337,6 +337,119 @@ router.get('/companies/:companyId/clients', async (req, res, next) => {
   }
 });
 
+// GET /api/super-admin/companies/:companyId/employees
+// Super admin: list employees of any specific company
+router.get('/companies/:companyId/employees', async (req, res, next) => {
+  try {
+    const companyId = Number.parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid companyId',
+      });
+    }
+
+    const companyResult = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [companyId]
+    );
+    if (!companyResult.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT u.id, u.company_id, u.name, u.email, u.role, u.status, u.team_id, u.created_at,
+              t.name AS team_name
+       FROM users u
+       LEFT JOIN teams t ON t.id = u.team_id
+       WHERE u.company_id = $1
+         AND u.role IN ('team_leader', 'team_member')
+       ORDER BY u.created_at DESC`,
+      [companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Employees fetched successfully',
+      count: rows.length,
+      companyId,
+      company: companyResult.rows[0],
+      data: rows.map((row) => ({
+        id: row.id,
+        EmployeeName: row.name,
+        email: row.email,
+        role: row.role,
+        status: row.status,
+        TeamId: row.team_id,
+        teamName: row.team_name,
+        companyId: row.company_id,
+        createdAt: row.created_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/super-admin/companies/:companyId/teams
+// Super admin: list teams of any specific company
+router.get('/companies/:companyId/teams', async (req, res, next) => {
+  try {
+    const companyId = Number.parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid companyId',
+      });
+    }
+
+    const companyResult = await pool.query(
+      `SELECT id, name, email, status FROM companies WHERE id = $1`,
+      [companyId]
+    );
+
+    if (!companyResult.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT t.id, t.name, t.description, t.created_at, t.updated_at,
+              leader.id AS leader_id, leader.name AS leader_name, leader.email AS leader_email,
+              COUNT(members.id)::int AS member_count
+       FROM teams t
+       LEFT JOIN users leader ON leader.id = t.leader_id
+       LEFT JOIN users members ON members.team_id = t.id
+       WHERE t.company_id = $1
+       GROUP BY t.id, leader.id, leader.name, leader.email
+       ORDER BY t.created_at DESC`,
+      [companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Teams fetched successfully',
+      count: rows.length,
+      companyId,
+      company: companyResult.rows[0],
+      data: rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/super-admin/companies/:companyId/projects
 // Super admin: list projects of any specific company
 router.get('/companies/:companyId/projects', async (req, res, next) => {

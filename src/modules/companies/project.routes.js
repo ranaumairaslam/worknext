@@ -65,70 +65,271 @@ async function loadCompany(req, res, next) {
 
 router.use(protect, loadCompany);
 
+const ALLOWED_PROJECT_STATUSES = [
+  "pending",
+  "active",
+  "inactive",
+  "completed",
+  "on_hold",
+];
+const ALLOWED_PROJECT_PRIORITIES = ["low", "medium", "high", "urgent"];
+
+const sendError = (res, status, message, errors = null) => {
+  const payload = { success: false, code: status, message };
+  if (errors) payload.errors = errors;
+  return res.status(status).json(payload);
+};
+
+const pickCreateProjectBody = (body = {}) => ({
+  projectName: body.projectName ?? body.name,
+  description: body.description ?? body.descrioptin,
+  teamLeaderName: body.TeamLeaderName ?? body.teamLeaderName,
+  projectTeam: body.ProjectTeam ?? body.projectTeam,
+  projectStatus: body.ProjectStatus ?? body.projectStatus ?? body.status,
+  projectPriority:
+    body.ProjectPriority ??
+    body.ProjectPrority ??
+    body.projectPriority ??
+    body.priority,
+  date: body.date ?? body.dueDate ?? body.startDate,
+  clientName: body.clientName ?? body.ClientName,
+});
+
+function validateCreateProject(body) {
+  const data = pickCreateProjectBody(body);
+  const errors = [];
+
+  if (!data.projectName || !String(data.projectName).trim()) {
+    errors.push({ field: "projectName", message: "projectName is required" });
+  }
+  if (!data.description || !String(data.description).trim()) {
+    errors.push({ field: "description", message: "description is required" });
+  }
+  if (!data.teamLeaderName || !String(data.teamLeaderName).trim()) {
+    errors.push({
+      field: "TeamLeaderName",
+      message: "TeamLeaderName is required",
+    });
+  }
+  if (!data.projectTeam || !String(data.projectTeam).trim()) {
+    errors.push({ field: "ProjectTeam", message: "ProjectTeam is required" });
+  }
+  if (!data.projectStatus || !String(data.projectStatus).trim()) {
+    errors.push({
+      field: "ProjectStatus",
+      message: "ProjectStatus is required",
+    });
+  } else if (
+    !ALLOWED_PROJECT_STATUSES.includes(
+      String(data.projectStatus).trim().toLowerCase(),
+    )
+  ) {
+    errors.push({
+      field: "ProjectStatus",
+      message: `ProjectStatus must be one of: ${ALLOWED_PROJECT_STATUSES.join(", ")}`,
+    });
+  }
+  if (!data.projectPriority || !String(data.projectPriority).trim()) {
+    errors.push({
+      field: "ProjectPriority",
+      message: "ProjectPriority is required",
+    });
+  } else if (
+    !ALLOWED_PROJECT_PRIORITIES.includes(
+      String(data.projectPriority).trim().toLowerCase(),
+    )
+  ) {
+    errors.push({
+      field: "ProjectPriority",
+      message: `ProjectPriority must be one of: ${ALLOWED_PROJECT_PRIORITIES.join(", ")}`,
+    });
+  }
+  if (!data.date || !String(data.date).trim()) {
+    errors.push({ field: "date", message: "date is required" });
+  } else if (Number.isNaN(Date.parse(String(data.date))) ) {
+    errors.push({ field: "date", message: "date must be a valid date" });
+  }
+  if (!data.clientName || !String(data.clientName).trim()) {
+    errors.push({ field: "clientName", message: "clientName is required" });
+  }
+
+  return { data, errors };
+}
+
 // =====================================================
 // CREATE PROJECT
+// POST /api/company/projects
+// Body: projectName, description, TeamLeaderName, ProjectTeam,
+//       ProjectStatus, ProjectPriority, date, clientName
 // =====================================================
 
 router.post(
   "/",
-  authorizeRole("company", "super_admin"),
-
+  authorizeRole("company", "super_admin", "team_leader"),
   async (req, res, next) => {
+    const client = await pool.connect();
     try {
-      const { name, description, clientId, startDate, dueDate } = req.body;
-
-      if (!name) {
-        return res.status(400).json({
-          success: false,
-          message: "Project name required",
-        });
+      const { data, errors } = validateCreateProject(req.body);
+      if (errors.length) {
+        return sendError(res, 400, "Validation failed", errors);
       }
 
-      const project = await pool.query(
+      const projectName = String(data.projectName).trim();
+      const description = String(data.description).trim();
+      const teamLeaderName = String(data.teamLeaderName).trim();
+      const projectTeam = String(data.projectTeam).trim();
+      const projectStatus = String(data.projectStatus).trim().toLowerCase();
+      const projectPriority = String(data.projectPriority).trim().toLowerCase();
+      const projectDate = String(data.date).trim();
+      const clientName = String(data.clientName).trim();
+
+      await client.query("BEGIN");
+
+      // Resolve team by id or name (within company)
+      let team;
+      const teamIdCandidate = Number.parseInt(projectTeam, 10);
+      if (Number.isInteger(teamIdCandidate) && String(teamIdCandidate) === projectTeam) {
+        const teamById = await client.query(
+          `SELECT id, name, leader_id FROM teams WHERE id = $1 AND company_id = $2`,
+          [teamIdCandidate, req.company.id],
+        );
+        team = teamById.rows[0];
+      } else {
+        const teamByName = await client.query(
+          `SELECT id, name, leader_id FROM teams
+           WHERE company_id = $1 AND LOWER(name) = LOWER($2)
+           ORDER BY id DESC LIMIT 1`,
+          [req.company.id, projectTeam],
+        );
+        team = teamByName.rows[0];
+      }
+
+      if (!team) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "ProjectTeam not found in your company", [
+          { field: "ProjectTeam", message: `No team found for "${projectTeam}"` },
+        ]);
+      }
+
+      // Resolve team leader by name (within company)
+      const leaderResult = await client.query(
+        `SELECT id, name, email, role, team_id FROM users
+         WHERE company_id = $1
+           AND LOWER(name) = LOWER($2)
+           AND role IN ('team_leader', 'team_member', 'company')
+         ORDER BY id DESC LIMIT 1`,
+        [req.company.id, teamLeaderName],
+      );
+      const leader = leaderResult.rows[0];
+      if (!leader) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "TeamLeaderName not found in your company", [
+          {
+            field: "TeamLeaderName",
+            message: `No employee found for "${teamLeaderName}"`,
+          },
+        ]);
+      }
+
+      // Resolve client by name / company_name / account owner / linked user
+      const clientResult = await client.query(
+        `SELECT c.id, c.name, c.company_name, c.email
+         FROM clients c
+         LEFT JOIN users u ON u.id = c.user_id
+         WHERE c.company_id = $1
+           AND (
+             LOWER(c.name) = LOWER($2)
+             OR LOWER(COALESCE(c.company_name, '')) = LOWER($2)
+             OR LOWER(COALESCE(c.email, '')) = LOWER($2)
+             OR LOWER(COALESCE(c.account_owner_name, '')) = LOWER($2)
+             OR LOWER(COALESCE(u.name, '')) = LOWER($2)
+           )
+         ORDER BY c.id DESC LIMIT 1`,
+        [req.company.id, clientName],
+      );
+      const linkedClient = clientResult.rows[0];
+      if (!linkedClient) {
+        await client.query("ROLLBACK");
+        return sendError(res, 404, "clientName not found in your company", [
+          { field: "clientName", message: `No client found for "${clientName}"` },
+        ]);
+      }
+
+      // Attach leader to team. Never demote a company/super_admin account.
+      if (leader.role === "company" || leader.role === "super_admin") {
+        // Keep company admin role; only set as project leader + team leader_id
+        await client.query(
+          `UPDATE teams SET leader_id = $1, updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [leader.id, team.id, req.company.id],
+        );
+      } else {
+        await client.query(
+          `UPDATE users
+           SET role = 'team_leader', team_id = $1
+           WHERE id = $2 AND company_id = $3`,
+          [team.id, leader.id, req.company.id],
+        );
+        await client.query(
+          `UPDATE teams SET leader_id = $1, updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [leader.id, team.id, req.company.id],
+        );
+      }
+
+      const { rows } = await client.query(
         `
-
-INSERT INTO projects
-
-(
-company_id,
-name,
-description,
-client_id,
-status,
-start_date,
-due_date,
-created_at
-)
-
-
-VALUES
-
-($1,$2,$3,$4,'pending',$5,$6,NOW())
-
-
-RETURNING *
-
-`,
-
+        INSERT INTO projects (
+          company_id, name, description, client_id, team_id, project_leader_id,
+          status, priority, start_date, due_date, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,NOW())
+        RETURNING *
+        `,
         [
           req.company.id,
-          name,
-          description || null,
-          clientId || null,
-          startDate || null,
-          dueDate || null,
+          projectName,
+          description,
+          linkedClient.id,
+          team.id,
+          leader.id,
+          projectStatus,
+          projectPriority,
+          projectDate,
         ],
       );
 
-      res.status(201).json({
+      await client.query("COMMIT");
+
+      return res.status(201).json({
         success: true,
-
-        message: "Project created",
-
-        data: project.rows[0],
+        code: 201,
+        message: "Project created successfully",
+        data: {
+          id: rows[0].id,
+          projectName: rows[0].name,
+          description: rows[0].description,
+          ProjectStatus: rows[0].status,
+          ProjectPriority: rows[0].priority,
+          date: rows[0].due_date,
+          TeamLeaderName: leader.name,
+          teamLeaderId: leader.id,
+          ProjectTeam: team.name,
+          teamId: team.id,
+          clientName: linkedClient.company_name || linkedClient.name,
+          clientId: linkedClient.id,
+          companyId: rows[0].company_id,
+          createdAt: rows[0].created_at,
+        },
       });
     } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        /* ignore */
+      }
       next(error);
+    } finally {
+      client.release();
     }
   },
 );
@@ -182,19 +383,20 @@ router.get("/", async (req, res, next) => {
       SELECT
         p.id,
         p.company_id,
-        p.name,
+        p.name AS "projectName",
         p.description,
-        p.status,
+        p.status AS "ProjectStatus",
+        p.priority AS "ProjectPriority",
         p.client_id,
         p.team_id,
         p.project_leader_id,
         p.start_date,
-        p.due_date,
+        p.due_date AS date,
         p.end_date,
         p.created_at,
-        t.name AS team_name,
-        u.name AS project_leader_name,
-        cl.name AS client_name,
+        t.name AS "ProjectTeam",
+        u.name AS "TeamLeaderName",
+        cl.name AS "clientName",
         cl.company_name AS client_company_name
       FROM projects p
       LEFT JOIN teams t ON t.id = p.team_id
@@ -298,11 +500,11 @@ router.get(
 );
 
 // =====================================================
-// GET / UPDATE SINGLE PROJECT
+// GET / UPDATE / DELETE SINGLE PROJECT
 // Supported URLs:
-//   GET|PUT|PATCH /api/company/projects/17
-//   GET|PUT|PATCH /api/company/projects/projectId/17
-//   GET|PUT|PATCH /api/company/projects/projectId:17
+//   GET|PUT|PATCH|DELETE /api/company/projects/17
+//   GET|PUT|PATCH|DELETE /api/company/projects/projectId/17
+//   GET|PUT|PATCH|DELETE /api/company/projects/projectId:17
 // =====================================================
 
 async function getProjectHandler(req, res, next) {
@@ -431,36 +633,347 @@ async function updateProjectHandler(req, res, next) {
   }
 }
 
+async function deleteProjectHandler(req, res, next) {
+  const db = await pool.connect();
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message:
+          "Invalid project id. Use /projects/projectId:2 or /projects/projectId/2",
+      });
+    }
+
+    const existing = await db.query(
+      `SELECT id, name, company_id, status, description
+       FROM projects
+       WHERE id = $1 AND company_id = $2`,
+      [projectId, req.company.id],
+    );
+
+    if (!existing.rows[0]) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Project not found for your company",
+      });
+    }
+
+    await db.query("BEGIN");
+
+    // Clean related rows that may not cascade automatically
+    try {
+      await db.query("SAVEPOINT sp_progress");
+      await db.query(`DELETE FROM progress_reports WHERE project_id = $1`, [
+        projectId,
+      ]);
+      await db.query("RELEASE SAVEPOINT sp_progress");
+    } catch (_) {
+      await db.query("ROLLBACK TO SAVEPOINT sp_progress");
+    }
+
+    const deleted = await db.query(
+      `DELETE FROM projects
+       WHERE id = $1 AND company_id = $2
+       RETURNING id, name, company_id, status, description`,
+      [projectId, req.company.id],
+    );
+
+    await db.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project deleted successfully",
+      data: {
+        id: deleted.rows[0].id,
+        projectName: deleted.rows[0].name,
+        description: deleted.rows[0].description,
+        ProjectStatus: deleted.rows[0].status,
+        companyId: deleted.rows[0].company_id,
+      },
+    });
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  } finally {
+    db.release();
+  }
+}
+
+const PROJECT_ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
+
 // Explicit style: /api/company/projects/projectId/17
 router.get("/projectId/:projectId", getProjectHandler);
 router.put(
   "/projectId/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
 );
 router.patch(
   "/projectId/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
+);
+router.delete(
+  "/projectId/:projectId",
+  authorizeRole("company", "super_admin"),
+  deleteProjectHandler,
 );
 router.all(
   "/projectId/:projectId",
-  methodNotAllowed(["GET", "PUT", "PATCH"]),
+  methodNotAllowed(PROJECT_ITEM_METHODS),
 );
 
-// Short style: /api/company/projects/17
-// Also supports /api/company/projects/projectId:17
+// Short / colon style:
+// /api/company/projects/17
+// /api/company/projects/projectId:2
 router.get("/:projectId", getProjectHandler);
 router.put(
   "/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
 );
 router.patch(
   "/:projectId",
-  authorizeRole("company", "super_admin"),
+  authorizeRole("company", "super_admin", "team_leader"),
   updateProjectHandler,
 );
+router.delete(
+  "/:projectId",
+  authorizeRole("company", "super_admin"),
+  deleteProjectHandler,
+);
+
+// =====================================================
+// PROJECT TASKS CRUD
+// /api/company/projects/15/tasks
+// /api/company/projects/projectId/15/tasks
+// /api/company/projects/15/tasks/12
+// =====================================================
+const taskRouteHandlers = require("../tasks/task.routes").handlers;
+const TASK_COLLECTION_METHODS = ["GET", "POST"];
+const TASK_ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
+
+const withParsedProjectId = (handler) => (req, res, next) => {
+  const projectId = parseProjectId(req.params.projectId);
+  if (!projectId) {
+    return sendError(res, 400, "Invalid project id", [
+      {
+        field: "projectId",
+        message: "Use /projects/15/tasks or /projects/projectId/15/tasks",
+      },
+    ]);
+  }
+  req.params.projectId = String(projectId);
+  return handler(req, res, next, projectId);
+};
+
+const getProjectTasksHandler = withParsedProjectId((req, res, next, projectId) =>
+  taskRouteHandlers.listTasksForProject(req, res, next, projectId),
+);
+
+const createProjectTaskHandler = withParsedProjectId((req, res, next, projectId) =>
+  taskRouteHandlers.createTaskForProject(req, res, next, projectId),
+);
+
+const getOneProjectTaskHandler = withParsedProjectId(async (req, res, next, projectId) => {
+  try {
+    const taskId = taskRouteHandlers.parseId(req.params.taskId, "taskId");
+    if (!taskId) {
+      return sendError(res, 400, "Invalid task id");
+    }
+
+    const { rows } = await pool.query(
+      `SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date,
+              t.project_id, t.assignee_id, t.created_at,
+              u.name AS assignee_name, u.email AS assignee_email
+       FROM tasks t
+       LEFT JOIN users u ON u.id = t.assignee_id
+       WHERE t.id = $1 AND t.project_id = $2 AND t.company_id = $3`,
+      [taskId, projectId, req.company.id],
+    );
+
+    if (!rows[0]) {
+      return sendError(res, 404, "Task not found for this project");
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Task fetched successfully",
+      projectId,
+      data: rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const updateProjectTaskHandler = withParsedProjectId((req, res, next) =>
+  taskRouteHandlers.updateTaskHandler(req, res, next),
+);
+
+const deleteProjectTaskHandler = withParsedProjectId((req, res, next) =>
+  taskRouteHandlers.deleteTaskHandler(req, res, next),
+);
+
+const canManageProjectTasks = authorizeRole(
+  "company",
+  "super_admin",
+  "team_leader",
+);
+
+// =====================================================
+// GET CLIENT FOR A SPECIFIC PROJECT
+// GET /api/company/projects/15/client
+// GET /api/company/projects/projectId/15/client
+// =====================================================
+async function getProjectClientHandler(req, res, next) {
+  try {
+    const projectId = parseProjectId(req.params.projectId);
+    if (!projectId) {
+      return sendError(res, 400, "Invalid project id", [
+        {
+          field: "projectId",
+          message: "Use /projects/15/client or /projects/projectId/15/client",
+        },
+      ]);
+    }
+
+    const project = await pool.query(
+      `SELECT id, name, client_id, status
+       FROM projects
+       WHERE id = $1 AND company_id = $2`,
+      [projectId, req.company.id],
+    );
+
+    if (!project.rows[0]) {
+      return sendError(res, 404, "Project not found");
+    }
+
+    if (!project.rows[0].client_id) {
+      return sendError(res, 404, "No client assigned to this project", [
+        {
+          field: "client_id",
+          message: "This project does not have a linked client",
+        },
+      ]);
+    }
+
+    const client = await pool.query(
+      `
+      SELECT
+        c.id,
+        c.company_id,
+        c.user_id,
+        c.name,
+        c.email,
+        c.company_name AS "companyName",
+        c.address,
+        c.industry,
+        c.account_owner_name AS "AccountOwnerName",
+        c.company_size AS "companySize",
+        c.revenue AS revenu,
+        c.location,
+        c.phone,
+        c.notes,
+        c.created_at,
+        c.updated_at
+      FROM clients c
+      WHERE c.id = $1 AND c.company_id = $2
+      `,
+      [project.rows[0].client_id, req.company.id],
+    );
+
+    if (!client.rows[0]) {
+      return sendError(res, 404, "Client not found for this project");
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Project client fetched successfully",
+      projectId,
+      project: {
+        id: project.rows[0].id,
+        name: project.rows[0].name,
+        status: project.rows[0].status,
+      },
+      data: client.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/projectId/:projectId/client", getProjectClientHandler);
+router.all("/projectId/:projectId/client", methodNotAllowed(["GET"]));
+
+router.get("/:projectId/client", getProjectClientHandler);
+router.all("/:projectId/client", methodNotAllowed(["GET"]));
+
+// Collection: list + create
+router.get("/projectId/:projectId/tasks", getProjectTasksHandler);
+router.post(
+  "/projectId/:projectId/tasks",
+  canManageProjectTasks,
+  createProjectTaskHandler,
+);
+router.all(
+  "/projectId/:projectId/tasks",
+  methodNotAllowed(TASK_COLLECTION_METHODS),
+);
+
+router.get("/:projectId/tasks", getProjectTasksHandler);
+router.post("/:projectId/tasks", canManageProjectTasks, createProjectTaskHandler);
+router.all("/:projectId/tasks", methodNotAllowed(TASK_COLLECTION_METHODS));
+
+// Item: get + edit + delete
+router.get("/projectId/:projectId/tasks/:taskId", getOneProjectTaskHandler);
+router.put(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.patch(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.delete(
+  "/projectId/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  deleteProjectTaskHandler,
+);
+router.all(
+  "/projectId/:projectId/tasks/:taskId",
+  methodNotAllowed(TASK_ITEM_METHODS),
+);
+
+router.get("/:projectId/tasks/:taskId", getOneProjectTaskHandler);
+router.put(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.patch(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  updateProjectTaskHandler,
+);
+router.delete(
+  "/:projectId/tasks/:taskId",
+  canManageProjectTasks,
+  deleteProjectTaskHandler,
+);
+router.all("/:projectId/tasks/:taskId", methodNotAllowed(TASK_ITEM_METHODS));
 
 // =====================================================
 // GET TEAM EMPLOYEES FOR PROJECT ASSIGN
@@ -713,6 +1226,6 @@ RETURNING *
 );
 
 // Method validation fallback for /:projectId (after nested routes)
-router.all("/:projectId", methodNotAllowed(["GET", "PUT", "PATCH"]));
+router.all("/:projectId", methodNotAllowed(PROJECT_ITEM_METHODS));
 
 module.exports = router;

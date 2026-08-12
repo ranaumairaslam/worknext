@@ -215,6 +215,14 @@ router.use('/projects', require('./project.routes'));
 router.use('/employees', require('../employees/employee.routes'));
 router.use('/clients', require('./client.routes'));
 router.use('/tasks', require('../tasks/task.routes'));
+router.use('/meetings', require('./meeting.routes'));
+router.use('/scheduledMeetings', require('./meeting.routes'));
+router.use('/scheduled-meetings', require('./meeting.routes'));
+router.use('/member-invites', require('./member-invite.routes'));
+router.use('/memberInvites', require('./member-invite.routes'));
+router.use('/revenues', require('./revenue.routes'));
+router.use('/project-revenues', require('./revenue.routes'));
+router.use('/projectRevenues', require('./revenue.routes'));
 router.use('/reports', require('./report.routes'));
 
 module.exports = router;
