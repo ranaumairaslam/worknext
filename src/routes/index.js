@@ -14,6 +14,8 @@ const teamLeaderRoutes = require('../modules/team-leader/teamleaderroutes');
 
 const clientUserRoutes = require('../modules/clients/client-user.routes');
 const projectProgressRoutes = require('../modules/companies/project.progress.routes');
+const notificationRoutes = require('../modules/notifications/notification.routes');
+const profileRoutes = require('../modules/profile/profile.routes');
 
 // Mount Routes
 router.use('/auth', authRoutes);
@@ -23,6 +25,8 @@ router.use('/company/projects', projectProgressRoutes);
 router.use('/team-leader', teamLeaderRoutes);
 
 router.use('/client', clientUserRoutes);
+router.use('/notifications', notificationRoutes);
+router.use('/profile', profileRoutes);
 
 // Compatibility route
 router.use('/login', (req, res, next) => {

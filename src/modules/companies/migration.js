@@ -35,6 +35,43 @@ async function migrate() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL;
     `);
 
+    // Phone for OTP / password-reset identity
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);`);
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    `);
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    `);
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_public_id TEXT;
+    `);
+
+    // Password reset OTPs (email or phone)
+    console.log('Ensuring password_reset_otps table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_otps (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR(10) NOT NULL CHECK (channel IN ('email', 'phone')),
+        destination VARCHAR(255) NOT NULL,
+        otp_hash VARCHAR(255) NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        used_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_password_reset_otps_user ON password_reset_otps(user_id);`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_password_reset_otps_destination ON password_reset_otps(destination);`
+    );
+
     // CLIENTS table (Step 8: Add Client)
     console.log('Ensuring clients table exists...');
     await pool.query(`
@@ -201,6 +238,46 @@ async function migrate() {
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         invited_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         PRIMARY KEY (meeting_id, user_id)
+      );
+    `);
+
+    // In-app notifications (CareClinic-style)
+    console.log('Ensuring notifications table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        recipient_email VARCHAR(255),
+        type VARCHAR(100) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL DEFAULT '',
+        link TEXT,
+        read BOOLEAN NOT NULL DEFAULT FALSE,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+    await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT;`);
+    await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_email ON notifications(recipient_email);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_company ON notifications(company_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read);`);
+
+    // Per-user notification preference switches
+    console.log('Ensuring notification_settings table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_settings (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        email_alerts BOOLEAN NOT NULL DEFAULT TRUE,
+        push_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+        task_updates BOOLEAN NOT NULL DEFAULT TRUE,
+        weekly_summary BOOLEAN NOT NULL DEFAULT TRUE,
+        new_client_added BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 

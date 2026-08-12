@@ -5,32 +5,13 @@ const authorize = require('../../middleware/role.middleware');
 
 const router = express.Router();
 
-// GET /api/client-dashboard/dashboard
-// mapped to /api/client/dashboard
-// this route is used to get the dashboard for the client
-// it will return the dashboard for the client
-// it will return the meetings for the client
-// it will return the projects for the client
-// it will return the tasks for the client
-// it will return the clients for the client
-// it will return the companies for the client
-// it will return the users for the client
-// it will return the roles for the client
-// it will return the permissions for the client
-// it will return the settings for the client
-// it will return the notifications for the client
-// it will return the messages for the client
-// it will return the files for the client
-// it will return the folders for the client
-// it will return the tags for the client
-// it will return the labels for the client
+// GET /api/client/dashboard
 router.get(
   '/dashboard',
   protect,
   authorize('client'),
   async (req, res, next) => {
     try {
-      // 1. Get logged-in client's profile
       const clientQuery = `
         SELECT
           cl.id,
@@ -44,21 +25,17 @@ router.get(
         WHERE cl.user_id = $1
       `;
 
-      const { rows: clientRows } = await pool.query(
-        clientQuery,
-        [req.user.id]
-      );
+      const { rows: clientRows } = await pool.query(clientQuery, [req.user.id]);
 
       if (!clientRows[0]) {
         return res.status(404).json({
           success: false,
-          message: 'Client profile not found'
+          message: 'Client profile not found',
         });
       }
 
       const client = clientRows[0];
 
-      // 2. Get meetings scheduled for this client
       const meetingsQuery = `
         SELECT
           m.id,
@@ -70,19 +47,17 @@ router.get(
           m.created_at,
           c.name AS company_name
         FROM meetings m
-        JOIN companies c
-          ON c.id = m.company_id
+        JOIN companies c ON c.id = m.company_id
         WHERE m.client_id = $1
           AND m.company_id = $2
         ORDER BY m.scheduled_at ASC
       `;
 
-      const { rows: meetings } = await pool.query(
-        meetingsQuery,
-        [client.id, client.company_id]
-      );
+      const { rows: meetings } = await pool.query(meetingsQuery, [
+        client.id,
+        client.company_id,
+      ]);
 
-      // 3. Return dashboard + meetings
       res.json({
         success: true,
         dashboard: 'client',
@@ -93,13 +68,11 @@ router.get(
             email: client.email,
             company_id: client.company_id,
             company_name: client.company_name,
-            created_at: client.created_at
+            created_at: client.created_at,
           },
-
-          meetings
-        }
+          meetings,
+        },
       });
-
     } catch (error) {
       next(error);
     }
@@ -122,54 +95,30 @@ router.get(
           p.start_date,
           p.end_date,
           p.created_at,
-
           COUNT(t.id)::int AS total_tasks,
-
           COUNT(
-            CASE
-              WHEN LOWER(t.status) IN ('completed', 'done')
-              THEN 1
-            END
+            CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END
           )::int AS completed_tasks,
-
           COUNT(
-            CASE
-              WHEN LOWER(t.status) IN ('in progress', 'in_progress')
-              THEN 1
-            END
+            CASE WHEN LOWER(t.status) IN ('in progress', 'in_progress') THEN 1 END
           )::int AS in_progress_tasks,
-
           COUNT(
-            CASE
-              WHEN LOWER(t.status) IN ('pending', 'todo')
-              THEN 1
-            END
+            CASE WHEN LOWER(t.status) IN ('pending', 'todo') THEN 1 END
           )::int AS pending_tasks,
-
           CASE
             WHEN COUNT(t.id) = 0 THEN 0
             ELSE ROUND(
               (
                 COUNT(
-                  CASE
-                    WHEN LOWER(t.status) IN ('completed', 'done')
-                    THEN 1
-                  END
+                  CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END
                 ) * 100.0
               ) / COUNT(t.id)
             )
           END AS progress
-
         FROM projects p
-
-        JOIN clients cl
-          ON cl.id = p.client_id
-
-        LEFT JOIN tasks t
-          ON t.project_id = p.id
-
+        JOIN clients cl ON cl.id = p.client_id
+        LEFT JOIN tasks t ON t.project_id = p.id
         WHERE cl.user_id = $1
-
         GROUP BY
           p.id,
           p.name,
@@ -178,7 +127,6 @@ router.get(
           p.start_date,
           p.end_date,
           p.created_at
-
         ORDER BY p.created_at DESC
       `;
 
@@ -186,12 +134,12 @@ router.get(
 
       res.json({
         success: true,
-        projects: rows
+        projects: rows,
       });
-
     } catch (error) {
       next(error);
     }
   }
 );
+
 module.exports = router;
