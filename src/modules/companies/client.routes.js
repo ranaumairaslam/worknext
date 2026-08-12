@@ -29,63 +29,111 @@ const methodNotAllowed = (allowed) => (req, res) => {
   });
 };
 
-const sendSuccess = (res, status, message, data = null) => {
-  const payload = { success: true, code: status, message };
-  if (data !== null) payload.data = data;
-  return res.status(status).json(payload);
-};
-
 const sendError = (res, status, message, errors = null) => {
   const payload = { success: false, code: status, message };
   if (errors) payload.errors = errors;
   return res.status(status).json(payload);
 };
 
-const CLIENT_SELECT = `
-  id,
-  company_id,
-  user_id,
-  name,
-  email,
-  company_name,
-  address,
-  industry,
-  account_owner_name,
-  company_size,
-  revenue,
-  location,
-  created_at,
-  updated_at
-`;
+const parseClientId = (raw) => {
+  const value = String(raw || "").trim();
+  const matched = value.match(/^(?:clientId[:/])?(\d+)$/i);
+  if (!matched) return null;
+  const id = Number.parseInt(matched[1], 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const canManage = authorizeRole("company", "super_admin");
 
 function pickClientBody(body = {}) {
   return {
-    companyName: body.companyName,
-    companyEmail: body.companyEmail,
-    password: body.password,
-    address: body.address,
-    industry: body.industry,
-    accountOwnerName: body.AccountOwnerName ?? body.accountOwnerName,
-    companySize: body.companySize,
-    revenue: body.revenu ?? body.revenue,
-    location: body.location,
+    clientName:
+      body.ClientName ??
+      body.clientName ??
+      body.name ??
+      body.companyName ??
+      null,
+    email: body.Email ?? body.email ?? body.companyEmail ?? null,
+    password: body.password ?? body.Password ?? null,
+    projectName: body.projectName ?? body.ProjectName ?? body.project_name ?? null,
+    projectDescription:
+      body.ProjectDescription ??
+      body.projectDescription ??
+      body.project_description ??
+      body.description ??
+      null,
   };
 }
 
-function validateCreateClient(body) {
-  const data = pickClientBody(body);
-  const errors = [];
+function formatClient(row) {
+  return {
+    id: row.id,
+    ClientName: row.name,
+    Email: row.email,
+    company_id: row.company_id,
+    user_id: row.user_id,
+    address: row.address ?? null,
+    industry: row.industry ?? null,
+    AccountOwnerName: row.account_owner_name ?? null,
+    companySize: row.company_size ?? null,
+    revenu: row.revenue !== null && row.revenue !== undefined ? Number(row.revenue) : null,
+    location: row.location ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at ?? null,
+  };
+}
 
-  if (!data.companyName || !String(data.companyName).trim()) {
-    errors.push({ field: "companyName", message: "companyName is required" });
+async function fetchClientProjects(companyId, clientId) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      id,
+      name AS "projectName",
+      description AS "ProjectDescription",
+      status,
+      start_date,
+      due_date,
+      end_date,
+      created_at,
+      updated_at
+    FROM projects
+    WHERE company_id = $1 AND client_id = $2
+    ORDER BY created_at DESC
+    `,
+    [companyId, clientId],
+  );
+  return rows;
+}
+
+async function fetchClientById(companyId, clientId) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      id, company_id, user_id, name, email,
+      address, industry, account_owner_name, company_size,
+      revenue, location, created_at, updated_at
+    FROM clients
+    WHERE id = $1 AND company_id = $2
+    `,
+    [clientId, companyId],
+  );
+  if (!rows[0]) return null;
+  const projects = await fetchClientProjects(companyId, clientId);
+  return {
+    ...formatClient(rows[0]),
+    projects,
+  };
+}
+
+function validateCreate(data) {
+  const errors = [];
+  if (!data.clientName || !String(data.clientName).trim()) {
+    errors.push({ field: "ClientName", message: "ClientName is required" });
   }
-  if (!data.companyEmail || !String(data.companyEmail).trim()) {
-    errors.push({ field: "companyEmail", message: "companyEmail is required" });
-  } else if (!validateEmail(data.companyEmail)) {
-    errors.push({
-      field: "companyEmail",
-      message: "companyEmail must be a valid email address",
-    });
+  if (!data.email || !String(data.email).trim()) {
+    errors.push({ field: "Email", message: "Email is required" });
+  } else if (!validateEmail(data.email)) {
+    errors.push({ field: "Email", message: "Email must be a valid email address" });
   }
   if (!data.password) {
     errors.push({ field: "password", message: "password is required" });
@@ -95,153 +143,41 @@ function validateCreateClient(body) {
       message: "password must be at least 6 characters",
     });
   }
-  if (!data.address || !String(data.address).trim()) {
-    errors.push({ field: "address", message: "address is required" });
+  if (!data.projectName || !String(data.projectName).trim()) {
+    errors.push({ field: "projectName", message: "projectName is required" });
   }
-  if (!data.industry || !String(data.industry).trim()) {
-    errors.push({ field: "industry", message: "industry is required" });
-  }
-  if (!data.accountOwnerName || !String(data.accountOwnerName).trim()) {
-    errors.push({
-      field: "AccountOwnerName",
-      message: "AccountOwnerName is required",
-    });
-  }
-  if (!data.companySize || !String(data.companySize).trim()) {
-    errors.push({ field: "companySize", message: "companySize is required" });
-  }
-  if (data.revenue === undefined || data.revenue === null || data.revenue === "") {
-    errors.push({ field: "revenu", message: "revenu is required" });
-  } else if (Number.isNaN(Number(data.revenue))) {
-    errors.push({ field: "revenu", message: "revenu must be a valid number" });
-  } else if (Number(data.revenue) < 0) {
-    errors.push({ field: "revenu", message: "revenu cannot be negative" });
-  }
-  if (!data.location || !String(data.location).trim()) {
-    errors.push({ field: "location", message: "location is required" });
-  }
-
-  return { data, errors };
-}
-
-function validateUpdateClient(body) {
-  const data = pickClientBody(body);
-  const errors = [];
-  const hasAnyField = Object.values(data).some(
-    (value) => value !== undefined && value !== null && value !== "",
-  );
-
-  if (!hasAnyField) {
-    errors.push({
-      field: "body",
-      message:
-        "At least one field is required: companyName, companyEmail, password, address, industry, AccountOwnerName, companySize, revenu, location",
-    });
-    return { data, errors };
-  }
-
-  if (data.companyName !== undefined && !String(data.companyName).trim()) {
-    errors.push({
-      field: "companyName",
-      message: "companyName cannot be empty",
-    });
-  }
-  if (data.companyEmail !== undefined) {
-    if (!String(data.companyEmail).trim()) {
-      errors.push({
-        field: "companyEmail",
-        message: "companyEmail cannot be empty",
-      });
-    } else if (!validateEmail(data.companyEmail)) {
-      errors.push({
-        field: "companyEmail",
-        message: "companyEmail must be a valid email address",
-      });
-    }
-  }
-  if (data.password !== undefined && String(data.password).length < 6) {
-    errors.push({
-      field: "password",
-      message: "password must be at least 6 characters",
-    });
-  }
-  if (data.address !== undefined && !String(data.address).trim()) {
-    errors.push({ field: "address", message: "address cannot be empty" });
-  }
-  if (data.industry !== undefined && !String(data.industry).trim()) {
-    errors.push({ field: "industry", message: "industry cannot be empty" });
-  }
-  if (
-    data.accountOwnerName !== undefined &&
-    !String(data.accountOwnerName).trim()
-  ) {
-    errors.push({
-      field: "AccountOwnerName",
-      message: "AccountOwnerName cannot be empty",
-    });
-  }
-  if (data.companySize !== undefined && !String(data.companySize).trim()) {
-    errors.push({
-      field: "companySize",
-      message: "companySize cannot be empty",
-    });
-  }
-  if (data.revenue !== undefined && data.revenue !== null && data.revenue !== "") {
-    if (Number.isNaN(Number(data.revenue))) {
-      errors.push({ field: "revenu", message: "revenu must be a valid number" });
-    } else if (Number(data.revenue) < 0) {
-      errors.push({ field: "revenu", message: "revenu cannot be negative" });
-    }
-  }
-  if (data.location !== undefined && !String(data.location).trim()) {
-    errors.push({ field: "location", message: "location cannot be empty" });
-  }
-
-  return { data, errors };
-}
-
-function mapClientResponse(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    userId: row.user_id,
-    companyName: row.company_name || row.name,
-    companyEmail: row.email,
-    address: row.address,
-    industry: row.industry,
-    AccountOwnerName: row.account_owner_name || row.name,
-    companySize: row.company_size,
-    revenu: row.revenue !== null && row.revenue !== undefined
-      ? Number(row.revenue)
-      : null,
-    location: row.location,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+  return errors;
 }
 
 // =====================================================
-// CREATE CLIENT
+// CREATE
 // POST /api/company/clients
+// Body: ClientName, Email, password, projectName, ProjectDescription
 // =====================================================
-router.post("/", authorizeRole("company", "super_admin"), async (req, res, next) => {
-  const { data, errors } = validateCreateClient(req.body);
-  if (errors.length) {
-    return sendError(res, 400, "Validation failed", errors);
-  }
-
+async function createClientHandler(req, res, next) {
   const db = await pool.connect();
   try {
-    const email = String(data.companyEmail).trim().toLowerCase();
-    const companyName = String(data.companyName).trim();
-    const ownerName = String(data.accountOwnerName).trim();
+    const data = pickClientBody(req.body || {});
+    const errors = validateCreate(data);
+    if (errors.length) {
+      return sendError(res, 400, "Validation failed", errors);
+    }
 
-    const existing = await db.query("SELECT id FROM users WHERE email = $1", [
-      email,
-    ]);
+    const clientName = String(data.clientName).trim();
+    const email = String(data.email).trim().toLowerCase();
+    const projectName = String(data.projectName).trim();
+    const projectDescription = data.projectDescription
+      ? String(data.projectDescription).trim()
+      : null;
+
+    const existing = await db.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+      [email],
+    );
     if (existing.rows[0]) {
-      return sendError(res, 409, "A user with this companyEmail already exists");
+      return sendError(res, 409, "A user with that email already exists", [
+        { field: "Email", message: "Email already in use" },
+      ]);
     }
 
     await db.query("BEGIN");
@@ -249,45 +185,47 @@ router.post("/", authorizeRole("company", "super_admin"), async (req, res, next)
     const passwordHash = await bcrypt.hash(String(data.password), 10);
 
     const { rows: userRows } = await db.query(
-      `INSERT INTO users (name, email, password, role, company_id, status, created_at)
-       VALUES ($1, $2, $3, 'client', $4, 'active', NOW())
-       RETURNING id, name, email, role, status`,
-      [ownerName, email, passwordHash, req.company.id],
+      `INSERT INTO users (name, email, password, role, company_id)
+       VALUES ($1, $2, $3, 'client', $4)
+       RETURNING id, name, email, role, company_id`,
+      [clientName, email, passwordHash, req.company.id],
     );
 
     const { rows: clientRows } = await db.query(
-      `INSERT INTO clients (
-         company_id, user_id, name, email, company_name, address, industry,
-         account_owner_name, company_size, revenue, location, created_at, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
-       RETURNING ${CLIENT_SELECT}`,
-      [
-        req.company.id,
-        userRows[0].id,
-        companyName,
-        email,
-        companyName,
-        String(data.address).trim(),
-        String(data.industry).trim(),
-        ownerName,
-        String(data.companySize).trim(),
-        Number(data.revenue),
-        String(data.location).trim(),
-      ],
+      `
+      INSERT INTO clients (name, email, company_id, user_id, company_name, account_owner_name)
+      VALUES ($1, $2, $3, $4, $1, $1)
+      RETURNING id, company_id, user_id, name, email, address, industry,
+                account_owner_name, company_size, revenue, location, created_at, updated_at
+      `,
+      [clientName, email, req.company.id, userRows[0].id],
+    );
+
+    const { rows: projectRows } = await db.query(
+      `
+      INSERT INTO projects (company_id, name, description, client_id, status)
+      VALUES ($1, $2, $3, $4, 'active')
+      RETURNING
+        id,
+        name AS "projectName",
+        description AS "ProjectDescription",
+        status,
+        client_id,
+        created_at
+      `,
+      [req.company.id, projectName, projectDescription, clientRows[0].id],
     );
 
     await db.query("COMMIT");
 
-    // Return ONLY the newly registered client (not the full clients list)
     return res.status(201).json({
       success: true,
       code: 201,
       message: "Client created successfully",
-      companyId: req.company.id,
-      data: mapClientResponse(clientRows[0]),
-      login: {
-        email: userRows[0].email,
-        role: userRows[0].role,
+      data: {
+        ...formatClient(clientRows[0]),
+        project: projectRows[0],
+        projects: [projectRows[0]],
       },
     });
   } catch (error) {
@@ -300,67 +238,46 @@ router.post("/", authorizeRole("company", "super_admin"), async (req, res, next)
   } finally {
     db.release();
   }
-});
+}
+
+router.post("/", canManage, createClientHandler);
+router.post("/create", canManage, createClientHandler);
+router.all("/create", methodNotAllowed(["POST"]));
 
 // =====================================================
-// GET ALL CLIENTS (optionally for a specific company)
-// GET /api/company/clients
-// GET /api/company/clients?companyId=15
-// Company role can only query their own companyId.
+// LIST
 // =====================================================
 router.get("/", async (req, res, next) => {
   try {
-    let targetCompanyId = req.company.id;
-
-    if (req.query.companyId !== undefined && req.query.companyId !== "") {
-      const requestedId = Number.parseInt(req.query.companyId, 10);
-      if (!Number.isInteger(requestedId) || requestedId <= 0) {
-        return sendError(res, 400, "Invalid companyId");
-      }
-
-      // Company admins may only view their own company's clients
-      if (req.user.role === "company" && requestedId !== Number(req.company.id)) {
-        return sendError(
-          res,
-          403,
-          "You can only view clients of your own company",
-        );
-      }
-
-      targetCompanyId = requestedId;
-    }
-
-    const companyCheck = await pool.query(
-      `SELECT id, name, email, status FROM companies WHERE id = $1`,
-      [targetCompanyId],
-    );
-    if (!companyCheck.rows[0]) {
-      return sendError(res, 404, "Company not found");
-    }
-
     const { rows } = await pool.query(
-      `SELECT ${CLIENT_SELECT}
-       FROM clients
-       WHERE company_id = $1
-       ORDER BY created_at DESC`,
-      [targetCompanyId],
+      `
+      SELECT
+        id, company_id, user_id, name, email,
+        address, industry, account_owner_name, company_size,
+        revenue, location, created_at, updated_at
+      FROM clients
+      WHERE company_id = $1
+      ORDER BY created_at DESC
+      `,
+      [req.company.id],
     );
 
-    const clients = rows.map(mapClientResponse);
+    const data = [];
+    for (const row of rows) {
+      const projects = await fetchClientProjects(req.company.id, row.id);
+      data.push({
+        ...formatClient(row),
+        projects,
+      });
+    }
 
     return res.status(200).json({
       success: true,
       code: 200,
       message: "Clients fetched successfully",
-      count: clients.length,
-      companyId: targetCompanyId,
-      company: {
-        id: companyCheck.rows[0].id,
-        name: companyCheck.rows[0].name,
-        email: companyCheck.rows[0].email,
-        status: companyCheck.rows[0].status,
-      },
-      data: clients,
+      count: data.length,
+      companyId: req.company.id,
+      data,
     });
   } catch (error) {
     next(error);
@@ -368,251 +285,341 @@ router.get("/", async (req, res, next) => {
 });
 
 // =====================================================
-// GET SINGLE CLIENT
-// GET /api/company/clients/:clientId
+// GET ONE
 // =====================================================
-router.get("/:clientId", async (req, res, next) => {
+async function getClientHandler(req, res, next) {
   try {
-    const clientId = Number.parseInt(req.params.clientId, 10);
-    if (!Number.isInteger(clientId) || clientId <= 0) {
-      return sendError(res, 400, "Invalid client id");
+    const clientId = parseClientId(req.params.clientId);
+    if (!clientId) {
+      return sendError(res, 400, "Invalid client id", [
+        {
+          field: "clientId",
+          message: "Use /clients/12 or /clients/clientId/12",
+        },
+      ]);
     }
 
-    const { rows } = await pool.query(
-      `SELECT ${CLIENT_SELECT}
-       FROM clients
-       WHERE id = $1 AND company_id = $2`,
-      [clientId, req.company.id],
-    );
+    const client = await fetchClientById(req.company.id, clientId);
+    if (!client) return sendError(res, 404, "Client not found");
 
-    if (!rows[0]) {
-      return sendError(res, 404, "Client not found");
-    }
-
-    return sendSuccess(
-      res,
-      200,
-      "Client fetched successfully",
-      mapClientResponse(rows[0]),
-    );
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Client fetched successfully",
+      data: client,
+    });
   } catch (error) {
     next(error);
   }
-});
+}
+
+router.get("/clientId/:clientId", getClientHandler);
+router.get("/:clientId", getClientHandler);
 
 // =====================================================
-// EDIT CLIENT
-// PUT /api/company/clients/:clientId
+// EDIT
 // =====================================================
-router.put(
-  "/:clientId",
-  authorizeRole("company", "super_admin"),
-  async (req, res, next) => {
-    const clientId = Number.parseInt(req.params.clientId, 10);
-    if (!Number.isInteger(clientId) || clientId <= 0) {
+async function updateClientHandler(req, res, next) {
+  const db = await pool.connect();
+  try {
+    const clientId = parseClientId(req.params.clientId);
+    if (!clientId) {
       return sendError(res, 400, "Invalid client id");
     }
 
-    const { data, errors } = validateUpdateClient(req.body);
+    const existing = await db.query(
+      `SELECT id, user_id, name, email FROM clients WHERE id = $1 AND company_id = $2`,
+      [clientId, req.company.id],
+    );
+    if (!existing.rows[0]) {
+      return sendError(res, 404, "Client not found");
+    }
+
+    const data = pickClientBody(req.body || {});
+    const errors = [];
+
+    let clientName = undefined;
+    if (data.clientName !== null && data.clientName !== undefined && data.clientName !== "") {
+      clientName = String(data.clientName).trim();
+      if (!clientName) {
+        errors.push({ field: "ClientName", message: "ClientName cannot be empty" });
+      }
+    }
+
+    let email = undefined;
+    if (data.email !== null && data.email !== undefined && data.email !== "") {
+      email = String(data.email).trim().toLowerCase();
+      if (!validateEmail(email)) {
+        errors.push({ field: "Email", message: "Email must be a valid email address" });
+      }
+    }
+
+    let passwordHash = undefined;
+    if (data.password !== null && data.password !== undefined && data.password !== "") {
+      if (String(data.password).length < 6) {
+        errors.push({
+          field: "password",
+          message: "password must be at least 6 characters",
+        });
+      } else {
+        passwordHash = await bcrypt.hash(String(data.password), 10);
+      }
+    }
+
+    let projectName = undefined;
+    if (
+      data.projectName !== null &&
+      data.projectName !== undefined &&
+      data.projectName !== ""
+    ) {
+      projectName = String(data.projectName).trim();
+    }
+
+    let projectDescription = undefined;
+    if (data.projectDescription !== null && data.projectDescription !== undefined) {
+      projectDescription =
+        data.projectDescription === ""
+          ? null
+          : String(data.projectDescription).trim();
+    }
+
     if (errors.length) {
       return sendError(res, 400, "Validation failed", errors);
     }
 
-    const db = await pool.connect();
-    try {
-      const existing = await db.query(
-        `SELECT ${CLIENT_SELECT}
-         FROM clients
-         WHERE id = $1 AND company_id = $2`,
-        [clientId, req.company.id],
+    if (
+      clientName === undefined &&
+      email === undefined &&
+      passwordHash === undefined &&
+      projectName === undefined &&
+      projectDescription === undefined
+    ) {
+      return sendError(res, 400, "Provide at least one field to update", [
+        {
+          field: "body",
+          message:
+            "ClientName, Email, password, projectName, or ProjectDescription",
+        },
+      ]);
+    }
+
+    await db.query("BEGIN");
+
+    if (email !== undefined) {
+      const duplicate = await db.query(
+        `SELECT id FROM users
+         WHERE LOWER(email) = LOWER($1)
+           AND id <> COALESCE($2, 0)
+         LIMIT 1`,
+        [email, existing.rows[0].user_id],
       );
-
-      if (!existing.rows[0]) {
-        return sendError(res, 404, "Client not found");
+      if (duplicate.rows[0]) {
+        await db.query("ROLLBACK");
+        return sendError(res, 409, "A user with that email already exists", [
+          { field: "Email", message: "Email already in use" },
+        ]);
       }
+    }
 
-      const current = existing.rows[0];
-      const nextEmail =
-        data.companyEmail !== undefined
-          ? String(data.companyEmail).trim().toLowerCase()
-          : current.email;
+    const { rows: updatedClients } = await db.query(
+      `
+      UPDATE clients SET
+        name = COALESCE($1, name),
+        email = COALESCE($2, email),
+        company_name = COALESCE($1, company_name),
+        account_owner_name = COALESCE($1, account_owner_name),
+        updated_at = NOW()
+      WHERE id = $3 AND company_id = $4
+      RETURNING id, company_id, user_id, name, email, address, industry,
+                account_owner_name, company_size, revenue, location, created_at, updated_at
+      `,
+      [clientName ?? null, email ?? null, clientId, req.company.id],
+    );
 
-      if (nextEmail !== current.email) {
-        const duplicate = await db.query(
-          "SELECT id FROM users WHERE email = $1 AND id <> COALESCE($2, 0)",
-          [nextEmail, current.user_id],
-        );
-        if (duplicate.rows[0]) {
-          return sendError(
-            res,
-            409,
-            "A user with this companyEmail already exists",
-          );
-        }
-      }
-
-      await db.query("BEGIN");
-
-      const companyName =
-        data.companyName !== undefined
-          ? String(data.companyName).trim()
-          : current.company_name || current.name;
-      const ownerName =
-        data.accountOwnerName !== undefined
-          ? String(data.accountOwnerName).trim()
-          : current.account_owner_name || current.name;
-
-      const { rows } = await db.query(
-        `UPDATE clients SET
-           name = $1,
-           email = $2,
-           company_name = $3,
-           address = COALESCE($4, address),
-           industry = COALESCE($5, industry),
-           account_owner_name = $6,
-           company_size = COALESCE($7, company_size),
-           revenue = COALESCE($8, revenue),
-           location = COALESCE($9, location),
-           updated_at = NOW()
-         WHERE id = $10 AND company_id = $11
-         RETURNING ${CLIENT_SELECT}`,
+    if (existing.rows[0].user_id) {
+      await db.query(
+        `
+        UPDATE users SET
+          name = COALESCE($1, name),
+          email = COALESCE($2, email),
+          password = COALESCE($3, password)
+        WHERE id = $4 AND company_id = $5
+        `,
         [
-          companyName,
-          nextEmail,
-          companyName,
-          data.address !== undefined ? String(data.address).trim() : null,
-          data.industry !== undefined ? String(data.industry).trim() : null,
-          ownerName,
-          data.companySize !== undefined
-            ? String(data.companySize).trim()
-            : null,
-          data.revenue !== undefined && data.revenue !== ""
-            ? Number(data.revenue)
-            : null,
-          data.location !== undefined ? String(data.location).trim() : null,
-          clientId,
+          clientName ?? null,
+          email ?? null,
+          passwordHash ?? null,
+          existing.rows[0].user_id,
           req.company.id,
         ],
       );
-
-      if (current.user_id) {
-        const userUpdates = [];
-        const userValues = [];
-
-        if (data.accountOwnerName !== undefined) {
-          userValues.push(ownerName);
-          userUpdates.push(`name = $${userValues.length}`);
-        }
-        if (data.companyEmail !== undefined) {
-          userValues.push(nextEmail);
-          userUpdates.push(`email = $${userValues.length}`);
-        }
-        if (data.password !== undefined) {
-          const passwordHash = await bcrypt.hash(String(data.password), 10);
-          userValues.push(passwordHash);
-          userUpdates.push(`password = $${userValues.length}`);
-        }
-
-        if (userUpdates.length) {
-          userValues.push(current.user_id);
-          await db.query(
-            `UPDATE users SET ${userUpdates.join(", ")} WHERE id = $${userValues.length}`,
-            userValues,
-          );
-        }
-      }
-
-      await db.query("COMMIT");
-
-      return sendSuccess(
-        res,
-        200,
-        "Client updated successfully",
-        mapClientResponse(rows[0]),
-      );
-    } catch (error) {
-      try {
-        await db.query("ROLLBACK");
-      } catch (_) {
-        /* ignore */
-      }
-      next(error);
-    } finally {
-      db.release();
     }
-  },
-);
+
+    // Update latest project for this client when project fields provided
+    if (projectName !== undefined || projectDescription !== undefined) {
+      const latestProject = await db.query(
+        `
+        SELECT id FROM projects
+        WHERE company_id = $1 AND client_id = $2
+        ORDER BY created_at DESC
+        LIMIT 1
+        `,
+        [req.company.id, clientId],
+      );
+
+      if (latestProject.rows[0]) {
+        await db.query(
+          `
+          UPDATE projects SET
+            name = COALESCE($1, name),
+            description = CASE WHEN $2::boolean THEN $3 ELSE description END,
+            updated_at = NOW()
+          WHERE id = $4 AND company_id = $5
+          `,
+          [
+            projectName ?? null,
+            projectDescription !== undefined,
+            projectDescription ?? null,
+            latestProject.rows[0].id,
+            req.company.id,
+          ],
+        );
+      } else if (projectName) {
+        await db.query(
+          `
+          INSERT INTO projects (company_id, name, description, client_id, status)
+          VALUES ($1, $2, $3, $4, 'active')
+          `,
+          [
+            req.company.id,
+            projectName,
+            projectDescription ?? null,
+            clientId,
+          ],
+        );
+      }
+    }
+
+    await db.query("COMMIT");
+
+    const client = await fetchClientById(req.company.id, clientId);
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Client updated successfully",
+      data: client || formatClient(updatedClients[0]),
+    });
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  } finally {
+    db.release();
+  }
+}
+
+router.patch("/edit/:clientId", canManage, updateClientHandler);
+router.put("/edit/:clientId", canManage, updateClientHandler);
+router.post("/edit/:clientId", canManage, updateClientHandler);
+router.all("/edit/:clientId", methodNotAllowed(["PUT", "PATCH", "POST"]));
+
+router.post("/edit", canManage, async (req, res, next) => {
+  const body = req.body || {};
+  const clientId = parseClientId(body.clientId ?? body.ClientId ?? body.id);
+  if (!clientId) {
+    return sendError(res, 400, "clientId is required", [
+      { field: "clientId", message: "Pass clientId in body to edit" },
+    ]);
+  }
+  req.params.clientId = String(clientId);
+  return updateClientHandler(req, res, next);
+});
+router.all("/edit", methodNotAllowed(["POST"]));
+
+router.patch("/clientId/:clientId", canManage, updateClientHandler);
+router.put("/clientId/:clientId", canManage, updateClientHandler);
 
 // =====================================================
-// DELETE CLIENT
-// DELETE /api/company/clients/:clientId
+// DELETE
 // =====================================================
-router.delete(
-  "/:clientId",
-  authorizeRole("company", "super_admin"),
-  async (req, res, next) => {
-    const clientId = Number.parseInt(req.params.clientId, 10);
-    if (!Number.isInteger(clientId) || clientId <= 0) {
+async function deleteClientHandler(req, res, next) {
+  const db = await pool.connect();
+  try {
+    const clientId = parseClientId(req.params.clientId);
+    if (!clientId) {
       return sendError(res, 400, "Invalid client id");
     }
 
-    const db = await pool.connect();
-    try {
-      const existing = await db.query(
-        `SELECT id, user_id, company_name, name, email
-         FROM clients
-         WHERE id = $1 AND company_id = $2`,
-        [clientId, req.company.id],
-      );
-
-      if (!existing.rows[0]) {
-        return sendError(res, 404, "Client not found");
-      }
-
-      const current = existing.rows[0];
-
-      await db.query("BEGIN");
-
-      // Detach projects linked to this client before delete
-      await db.query(
-        `UPDATE projects SET client_id = NULL WHERE client_id = $1 AND company_id = $2`,
-        [clientId, req.company.id],
-      );
-
-      await db.query(`DELETE FROM clients WHERE id = $1 AND company_id = $2`, [
-        clientId,
-        req.company.id,
-      ]);
-
-      if (current.user_id) {
-        await db.query(
-          `DELETE FROM users WHERE id = $1 AND role = 'client' AND company_id = $2`,
-          [current.user_id, req.company.id],
-        );
-      }
-
-      await db.query("COMMIT");
-
-      return sendSuccess(res, 200, "Client deleted successfully", {
-        id: current.id,
-        companyName: current.company_name || current.name,
-        companyEmail: current.email,
-      });
-    } catch (error) {
-      try {
-        await db.query("ROLLBACK");
-      } catch (_) {
-        /* ignore */
-      }
-      next(error);
-    } finally {
-      db.release();
+    const existing = await db.query(
+      `SELECT id, user_id, name, email FROM clients WHERE id = $1 AND company_id = $2`,
+      [clientId, req.company.id],
+    );
+    if (!existing.rows[0]) {
+      return sendError(res, 404, "Client not found");
     }
-  },
+
+    await db.query("BEGIN");
+
+    // Unlink projects (keep projects, clear client_id)
+    await db.query(
+      `UPDATE projects SET client_id = NULL, updated_at = NOW()
+       WHERE client_id = $1 AND company_id = $2`,
+      [clientId, req.company.id],
+    );
+
+    await db.query(`DELETE FROM clients WHERE id = $1 AND company_id = $2`, [
+      clientId,
+      req.company.id,
+    ]);
+
+    if (existing.rows[0].user_id) {
+      await db.query(
+        `DELETE FROM users WHERE id = $1 AND company_id = $2 AND role = 'client'`,
+        [existing.rows[0].user_id, req.company.id],
+      );
+    }
+
+    await db.query("COMMIT");
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Client deleted successfully",
+      data: {
+        id: existing.rows[0].id,
+        ClientName: existing.rows[0].name,
+        Email: existing.rows[0].email,
+      },
+    });
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    next(error);
+  } finally {
+    db.release();
+  }
+}
+
+router.delete("/delete/:clientId", canManage, deleteClientHandler);
+router.all("/delete/:clientId", methodNotAllowed(["DELETE"]));
+
+router.delete("/clientId/:clientId", canManage, deleteClientHandler);
+router.all(
+  "/clientId/:clientId",
+  methodNotAllowed(["GET", "PUT", "PATCH", "DELETE"]),
 );
 
-// Method validation fallbacks
+router.patch("/:clientId", canManage, updateClientHandler);
+router.put("/:clientId", canManage, updateClientHandler);
+router.delete("/:clientId", canManage, deleteClientHandler);
+
 router.all("/", methodNotAllowed(["GET", "POST"]));
-router.all("/:clientId", methodNotAllowed(["GET", "PUT", "DELETE"]));
+router.all("/:clientId", methodNotAllowed(["GET", "PUT", "PATCH", "DELETE"]));
 
 module.exports = router;
