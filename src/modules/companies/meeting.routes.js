@@ -15,8 +15,8 @@ const ALLOWED_STATUSES = ["scheduled", "completed", "cancelled", "live"];
 const COLLECTION_METHODS = ["GET", "POST"];
 const ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
 
-/** toWhome audience types */
-const TO_WHOM_TYPES = ["Team Meeting", "Client", "Team Leads"];
+/** toWhom / toWhome audience types */
+const TO_WHOM_TYPES = ["Team Meeting", "Client", "Project Leader"];
 
 function normalizeToWhome(value) {
   if (value === null || value === undefined || String(value).trim() === "") {
@@ -28,11 +28,16 @@ function normalizeToWhome(value) {
     "team meeting": "Team Meeting",
     teammeeting: "Team Meeting",
     client: "Client",
-    "team leads": "Team Leads",
-    "team lead": "Team Leads",
-    teamleads: "Team Leads",
-    teamlead: "Team Leads",
-    leads: "Team Leads",
+    "project leader": "Project Leader",
+    projectleader: "Project Leader",
+    "project lead": "Project Leader",
+    projectlead: "Project Leader",
+    // legacy aliases → Project Leader
+    "team leads": "Project Leader",
+    "team lead": "Project Leader",
+    teamleads: "Project Leader",
+    teamlead: "Project Leader",
+    leads: "Project Leader",
   };
   return map[key] || map[compact] || null;
 }
@@ -108,6 +113,31 @@ async function loadCompany(req, res, next) {
 router.use(protect, loadCompany);
 
 const canManage = authorizeRole("company", "super_admin", "team_leader");
+
+// Forward declaration — assigned after listMeetingsHandler is defined
+let listMeetingsHandler = async (req, res) => {
+  return sendError(res, 500, "Meetings list handler not ready");
+};
+
+// Early aliases so Postman paths always resolve (before /:meetingId)
+router.get("/list", (req, res, next) => listMeetingsHandler(req, res, next));
+router.post("/list", (req, res, next) =>
+  listMeetingsHandler(req, res, next, { requireToWhom: true }),
+);
+router.post("/get", (req, res, next) =>
+  listMeetingsHandler(req, res, next, { requireToWhom: true }),
+);
+router.get("/get", (req, res, next) => listMeetingsHandler(req, res, next));
+router.post("/filter", (req, res, next) =>
+  listMeetingsHandler(req, res, next, { requireToWhom: true }),
+);
+router.post("/filter/", (req, res, next) =>
+  listMeetingsHandler(req, res, next, { requireToWhom: true }),
+);
+router.all("/list", methodNotAllowed(["GET", "POST"]));
+router.all("/get", methodNotAllowed(["GET", "POST"]));
+router.all("/filter", methodNotAllowed(["POST"]));
+router.all("/filter/", methodNotAllowed(["POST"]));
 
 function pickMeetingBody(body = {}) {
   const teamsRaw =
@@ -335,31 +365,28 @@ async function fetchTeamMembers(db, companyId, teams) {
   return rows;
 }
 
-async function fetchTeamLeads(db, companyId, teams) {
-  if (!teams.length) return [];
-  const teamIds = teams.map((t) => t.id);
+async function fetchProjectLeader(db, companyId, projectId) {
+  if (!projectId) return null;
   const { rows } = await db.query(
     `
-    SELECT DISTINCT u.id, u.name, u.email, u.role, u.team_id
-    FROM teams t
-    JOIN users u ON u.company_id = $1 AND (
-      u.id = t.leader_id
-      OR (u.team_id = t.id AND u.role = 'team_leader')
-    )
-    WHERE t.company_id = $1
-      AND t.id = ANY($2::int[])
-    ORDER BY u.name ASC
+    SELECT u.id, u.name, u.email, u.role, u.team_id
+    FROM projects p
+    JOIN users u ON u.id = p.project_leader_id
+    WHERE p.id = $1
+      AND p.company_id = $2
+      AND u.company_id = $2
+    LIMIT 1
     `,
-    [companyId, teamIds],
+    [projectId, companyId],
   );
-  return rows;
+  return rows[0] || null;
 }
 
 /**
  * Link teams to meeting and invite by audience:
- * - Team Meeting → all team members
- * - Team Leads  → only team leaders
- * - Client      → teams optional (linked only), no member auto-invite
+ * - Team Meeting    → all team members
+ * - Project Leader  → teams linked only (leader invited separately)
+ * - Client          → teams optional (client invited separately)
  */
 async function attachTeamsWithMembers(
   db,
@@ -377,7 +404,7 @@ async function attachTeamsWithMembers(
 
     await db.query(`DELETE FROM meeting_teams WHERE meeting_id = $1`, [meetingId]);
 
-    if (previousIds.length) {
+    if (previousIds.length && audience === "Team Meeting") {
       await db.query(
         `
         DELETE FROM meeting_members mm
@@ -385,13 +412,7 @@ async function attachTeamsWithMembers(
         WHERE mm.meeting_id = $1
           AND mm.user_id = u.id
           AND u.company_id = $2
-          AND (
-            u.team_id = ANY($3::int[])
-            OR u.id IN (
-              SELECT leader_id FROM teams
-              WHERE id = ANY($3::int[]) AND leader_id IS NOT NULL
-            )
-          )
+          AND u.team_id = ANY($3::int[])
         `,
         [meetingId, companyId, previousIds],
       );
@@ -406,17 +427,11 @@ async function attachTeamsWithMembers(
     );
   }
 
-  if (audience === "Client") {
+  // Only Team Meeting auto-invites team members from Teams
+  if (audience !== "Team Meeting") {
     return [];
   }
 
-  if (audience === "Team Leads") {
-    const leads = await fetchTeamLeads(db, companyId, teams);
-    await addMeetingMembers(db, meetingId, leads);
-    return leads;
-  }
-
-  // Team Meeting (default): invite all members of selected teams
   const members = await fetchTeamMembers(db, companyId, teams);
   await addMeetingMembers(db, meetingId, members);
   return members;
@@ -541,6 +556,7 @@ async function fetchMeetingById(companyId, meetingId) {
     SELECT
       m.id,
       m.title AS "Title",
+      m.to_whom AS "toWhom",
       m.to_whom AS "toWhome",
       m.invitee_user_id,
       m.project_id,
@@ -631,19 +647,16 @@ function validateCreate(data) {
   const toWhome = normalizeToWhome(data.toWhome);
   if (!toWhome) {
     errors.push({
-      field: "toWhome",
-      message: `toWhome must be one of: ${TO_WHOM_TYPES.join(", ")}`,
+      field: "toWhom",
+      message: `toWhom must be one of: ${TO_WHOM_TYPES.join(", ")}`,
     });
   }
 
   const teams = normalizeTeamsInput(data.teams);
-  if (
-    (toWhome === "Team Meeting" || toWhome === "Team Leads") &&
-    !teams.length
-  ) {
+  if (toWhome === "Team Meeting" && !teams.length) {
     errors.push({
       field: "Teams",
-      message: `Teams is required when toWhome is "${toWhome}"`,
+      message: 'Teams is required when toWhom is "Team Meeting"',
     });
   }
 
@@ -656,7 +669,7 @@ function validateCreate(data) {
     if (!hasClient) {
       errors.push({
         field: "ClientName",
-        message: 'ClientName (or clientId) is required when toWhome is "Client"',
+        message: 'ClientName (or clientId) is required when toWhom is "Client"',
       });
     }
   }
@@ -732,7 +745,10 @@ async function createMeetingHandler(req, res, next) {
     }
 
     let clientId = null;
+    let inviteeUserId = null;
     let clientUserInvite = null;
+    let projectLeaderInvite = null;
+
     if (toWhome === "Client") {
       const clientResult = await resolveClientTarget(db, req.company.id, data);
       if (clientResult.error) {
@@ -748,7 +764,32 @@ async function createMeetingHandler(req, res, next) {
           name: clientResult.client.name,
           email: clientResult.client.email,
         };
+        inviteeUserId = clientResult.client.user_id;
       }
+    }
+
+    if (toWhome === "Project Leader") {
+      projectLeaderInvite = await fetchProjectLeader(
+        db,
+        req.company.id,
+        projectResult.project.id,
+      );
+      if (!projectLeaderInvite) {
+        await db.query("ROLLBACK");
+        return sendError(
+          res,
+          404,
+          "Project Leader not found for this project",
+          [
+            {
+              field: "toWhom",
+              message:
+                "Assign a project leader to the project before scheduling this meeting",
+            },
+          ],
+        );
+      }
+      inviteeUserId = projectLeaderInvite.id;
     }
 
     const scheduledAt = buildScheduledAt(date, time);
@@ -767,7 +808,7 @@ async function createMeetingHandler(req, res, next) {
         req.company.id,
         String(data.title).trim(),
         toWhome,
-        clientUserInvite?.id || null,
+        inviteeUserId,
         clientId,
         projectResult.project?.id || null,
         date,
@@ -783,14 +824,25 @@ async function createMeetingHandler(req, res, next) {
     const meetingId = rows[0].id;
 
     // Audience-based invites
-    if (toWhome === "Team Meeting" || toWhome === "Team Leads") {
+    if (toWhome === "Team Meeting") {
       await replaceMeetingTeams(
         db,
         req.company.id,
         meetingId,
         teamsResult.teams,
-        toWhome,
+        "Team Meeting",
       );
+    } else if (toWhome === "Project Leader") {
+      if (teamsResult.teams.length) {
+        await replaceMeetingTeams(
+          db,
+          req.company.id,
+          meetingId,
+          teamsResult.teams,
+          "Project Leader",
+        );
+      }
+      await addMeetingMembers(db, meetingId, [projectLeaderInvite]);
     } else if (toWhome === "Client") {
       // Optional teams can be linked, but only the client is invited
       if (teamsResult.teams.length) {
@@ -834,18 +886,68 @@ router.all("/create", methodNotAllowed(["POST"]));
 
 // =====================================================
 // LIST + GET ONE
+// Filter by toWhom: Team Meeting | Client | Project Leader
+// GET  /api/company/scheduledMeetings?toWhom=Client
+// POST /api/company/scheduledMeetings/filter  { "toWhom": "Client" }
 // =====================================================
-router.get("/", async (req, res, next) => {
+listMeetingsHandler = async function listMeetingsHandler(
+  req,
+  res,
+  next,
+  { requireToWhom = false } = {},
+) {
   try {
-    const status = ALLOWED_STATUSES.includes(String(req.query.status || "").toLowerCase())
-      ? String(req.query.status).toLowerCase()
+    const rawToWhom =
+      req.body?.toWhom ??
+      req.body?.toWhome ??
+      req.query.toWhom ??
+      req.query.toWhome ??
+      null;
+
+    let toWhom = null;
+    if (rawToWhom !== null && rawToWhom !== undefined && String(rawToWhom).trim() !== "") {
+      toWhom = normalizeToWhome(rawToWhom);
+      if (!toWhom) {
+        return sendError(res, 400, "Invalid toWhom", [
+          {
+            field: "toWhom",
+            message: `toWhom must be one of: ${TO_WHOM_TYPES.join(", ")}`,
+          },
+        ]);
+      }
+    } else if (requireToWhom) {
+      return sendError(res, 400, "toWhom is required", [
+        {
+          field: "toWhom",
+          message: `Pass toWhom: ${TO_WHOM_TYPES.join(" | ")}`,
+        },
+      ]);
+    }
+
+    const status = ALLOWED_STATUSES.includes(
+      String(req.query.status || req.body?.status || "").toLowerCase(),
+    )
+      ? String(req.query.status || req.body?.status).toLowerCase()
       : null;
 
     const values = [req.company.id];
-    let statusClause = "";
+    const clauses = ["m.company_id = $1"];
+
     if (status) {
       values.push(status);
-      statusClause = ` AND m.status = $${values.length}`;
+      clauses.push(`m.status = $${values.length}`);
+    }
+
+    if (toWhom) {
+      if (toWhom === "Project Leader") {
+        values.push("Project Leader", "Team Leads", "Team Lead");
+        clauses.push(
+          `(m.to_whom = $${values.length - 2} OR m.to_whom = $${values.length - 1} OR m.to_whom = $${values.length})`,
+        );
+      } else {
+        values.push(toWhom);
+        clauses.push(`m.to_whom = $${values.length}`);
+      }
     }
 
     const { rows } = await pool.query(
@@ -853,6 +955,7 @@ router.get("/", async (req, res, next) => {
       SELECT
         m.id,
         m.title AS "Title",
+        m.to_whom AS "toWhom",
         m.to_whom AS "toWhome",
         m.invitee_user_id,
         m.project_id,
@@ -921,8 +1024,7 @@ router.get("/", async (req, res, next) => {
         ) AS "Members"
       FROM meetings m
       LEFT JOIN projects p ON p.id = m.project_id
-      WHERE m.company_id = $1
-      ${statusClause}
+      WHERE ${clauses.join(" AND ")}
       ORDER BY m.scheduled_at ASC NULLS LAST, m.created_at DESC
       `,
       values,
@@ -931,14 +1033,19 @@ router.get("/", async (req, res, next) => {
     return res.status(200).json({
       success: true,
       code: 200,
-      message: "Meetings fetched successfully",
+      message: toWhom
+        ? `Meetings for toWhom="${toWhom}" fetched successfully`
+        : "Meetings fetched successfully",
+      toWhom: toWhom || null,
       count: rows.length,
       data: rows,
     });
   } catch (error) {
     next(error);
   }
-});
+};
+
+router.get("/", (req, res, next) => listMeetingsHandler(req, res, next));
 
 async function getMeetingHandler(req, res, next) {
   try {
@@ -996,8 +1103,8 @@ async function updateMeetingHandler(req, res, next) {
       toWhome = normalizeToWhome(data.toWhome);
       if (!toWhome) {
         errors.push({
-          field: "toWhome",
-          message: `toWhome must be one of: ${TO_WHOM_TYPES.join(", ")}`,
+          field: "toWhom",
+          message: `toWhom must be one of: ${TO_WHOM_TYPES.join(", ")}`,
         });
       }
     }
@@ -1115,6 +1222,36 @@ async function updateMeetingHandler(req, res, next) {
       }
     }
 
+    if (audience === "Project Leader" && toWhome !== undefined) {
+      const currentProject = await db.query(
+        `SELECT project_id FROM meetings WHERE id = $1`,
+        [meetingId],
+      );
+      const targetProjectId =
+        projectId !== undefined
+          ? projectId
+          : currentProject.rows[0]?.project_id;
+      const leader = await fetchProjectLeader(
+        db,
+        req.company.id,
+        targetProjectId,
+      );
+      if (!leader) {
+        await db.query("ROLLBACK");
+        return sendError(
+          res,
+          404,
+          "Project Leader not found for this project",
+          [{ field: "toWhom", message: "Project has no assigned project leader" }],
+        );
+      }
+      inviteeUserId = leader.id;
+      await db.query(`DELETE FROM meeting_members WHERE meeting_id = $1`, [
+        meetingId,
+      ]);
+      await addMeetingMembers(db, meetingId, [leader]);
+    }
+
     const hasTeamsField =
       (req.body || {}).Teams !== undefined ||
       (req.body || {}).teams !== undefined ||
@@ -1128,12 +1265,9 @@ async function updateMeetingHandler(req, res, next) {
         await db.query("ROLLBACK");
         return sendError(res, 404, "One or more teams not found", teamsResult.errors);
       }
-      if (
-        (audience === "Team Meeting" || audience === "Team Leads") &&
-        !teamsResult.teams.length
-      ) {
+      if (audience === "Team Meeting" && !teamsResult.teams.length) {
         await db.query("ROLLBACK");
-        return sendError(res, 400, `Teams is required when toWhome is "${audience}"`, [
+        return sendError(res, 400, 'Teams is required when toWhom is "Team Meeting"', [
           { field: "Teams", message: "select at least one team" },
         ]);
       }
@@ -1144,7 +1278,7 @@ async function updateMeetingHandler(req, res, next) {
         teamsResult.teams,
         audience,
       );
-    } else if (toWhome !== undefined && (audience === "Team Meeting" || audience === "Team Leads")) {
+    } else if (toWhome !== undefined && audience === "Team Meeting") {
       // Audience type changed — re-apply invites for currently linked teams
       const linked = await db.query(
         `SELECT t.id, t.name
@@ -1411,35 +1545,29 @@ async function inviteToMeetingHandler(req, res, next) {
     let invitedMembers = [];
     let invitedTeams = [];
 
-    if (hasMembers && audience !== "Client") {
-      // Explicit members only for Team Meeting / Team Leads
-      if (audience === "Team Leads") {
-        // Only allow inviting users who are team leaders
-        const membersResult = await resolveMembers(db, req.company.id, membersRaw);
-        if (membersResult.errors) {
-          await db.query("ROLLBACK");
-          return sendError(res, 404, "One or more members not found", membersResult.errors);
-        }
-        const leadsOnly = membersResult.members.filter(
-          (m) => m.role === "team_leader",
-        );
-        if (!leadsOnly.length) {
-          await db.query("ROLLBACK");
-          return sendError(res, 400, "Only Team Leads can be invited for this meeting", [
-            { field: "Members", message: "Provided members are not team leads" },
-          ]);
-        }
-        await addMeetingMembers(db, meetingId, leadsOnly);
-        invitedMembers = leadsOnly;
-      } else {
-        const membersResult = await resolveMembers(db, req.company.id, membersRaw);
-        if (membersResult.errors) {
-          await db.query("ROLLBACK");
-          return sendError(res, 404, "One or more members not found", membersResult.errors);
-        }
-        await addMeetingMembers(db, meetingId, membersResult.members);
-        invitedMembers = membersResult.members;
+    if (hasMembers && audience === "Team Meeting") {
+      const membersResult = await resolveMembers(db, req.company.id, membersRaw);
+      if (membersResult.errors) {
+        await db.query("ROLLBACK");
+        return sendError(res, 404, "One or more members not found", membersResult.errors);
       }
+      await addMeetingMembers(db, meetingId, membersResult.members);
+      invitedMembers = membersResult.members;
+    }
+
+    if (hasMembers && audience === "Project Leader") {
+      await db.query("ROLLBACK");
+      return sendError(
+        res,
+        400,
+        'Cannot invite arbitrary members when toWhom is "Project Leader"',
+        [
+          {
+            field: "toWhom",
+            message: "Project Leader meetings only invite the project leader",
+          },
+        ],
+      );
     }
 
     if (hasClientInvite) {
