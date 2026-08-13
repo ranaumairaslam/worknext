@@ -313,9 +313,6 @@ async function getClientHandler(req, res, next) {
   }
 }
 
-router.get("/clientId/:clientId", getClientHandler);
-router.get("/:clientId", getClientHandler);
-
 // =====================================================
 // EDIT
 // =====================================================
@@ -521,27 +518,6 @@ async function updateClientHandler(req, res, next) {
   }
 }
 
-router.patch("/edit/:clientId", canManage, updateClientHandler);
-router.put("/edit/:clientId", canManage, updateClientHandler);
-router.post("/edit/:clientId", canManage, updateClientHandler);
-router.all("/edit/:clientId", methodNotAllowed(["PUT", "PATCH", "POST"]));
-
-router.post("/edit", canManage, async (req, res, next) => {
-  const body = req.body || {};
-  const clientId = parseClientId(body.clientId ?? body.ClientId ?? body.id);
-  if (!clientId) {
-    return sendError(res, 400, "clientId is required", [
-      { field: "clientId", message: "Pass clientId in body to edit" },
-    ]);
-  }
-  req.params.clientId = String(clientId);
-  return updateClientHandler(req, res, next);
-});
-router.all("/edit", methodNotAllowed(["POST"]));
-
-router.patch("/clientId/:clientId", canManage, updateClientHandler);
-router.put("/clientId/:clientId", canManage, updateClientHandler);
-
 // =====================================================
 // DELETE
 // =====================================================
@@ -606,15 +582,47 @@ async function deleteClientHandler(req, res, next) {
   }
 }
 
+// =====================================================
+// ROUTE REGISTRATION
+// Static paths (/edit, /delete, /create, /clientId/...) MUST be
+// registered BEFORE /:clientId, or "edit"/"delete" are treated as ids.
+// =====================================================
+
+// Edit
+router.patch("/edit/:clientId", canManage, updateClientHandler);
+router.put("/edit/:clientId", canManage, updateClientHandler);
+router.post("/edit/:clientId", canManage, updateClientHandler);
+router.all("/edit/:clientId", methodNotAllowed(["PUT", "PATCH", "POST"]));
+
+router.post("/edit", canManage, async (req, res, next) => {
+  const body = req.body || {};
+  const clientId = parseClientId(body.clientId ?? body.ClientId ?? body.id);
+  if (!clientId) {
+    return sendError(res, 400, "clientId is required", [
+      { field: "clientId", message: "Pass clientId in body to edit" },
+    ]);
+  }
+  req.params.clientId = String(clientId);
+  return updateClientHandler(req, res, next);
+});
+router.all("/edit", methodNotAllowed(["POST"]));
+
+// Delete
 router.delete("/delete/:clientId", canManage, deleteClientHandler);
 router.all("/delete/:clientId", methodNotAllowed(["DELETE"]));
 
+// Explicit clientId style
+router.get("/clientId/:clientId", getClientHandler);
+router.patch("/clientId/:clientId", canManage, updateClientHandler);
+router.put("/clientId/:clientId", canManage, updateClientHandler);
 router.delete("/clientId/:clientId", canManage, deleteClientHandler);
 router.all(
   "/clientId/:clientId",
   methodNotAllowed(["GET", "PUT", "PATCH", "DELETE"]),
 );
 
+// Parametric id routes LAST
+router.get("/:clientId", getClientHandler);
 router.patch("/:clientId", canManage, updateClientHandler);
 router.put("/:clientId", canManage, updateClientHandler);
 router.delete("/:clientId", canManage, deleteClientHandler);

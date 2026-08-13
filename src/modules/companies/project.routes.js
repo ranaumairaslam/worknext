@@ -1,9 +1,7 @@
 const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
-
 const router = express.Router({ mergeParams: true });
-
 const authorizeRole = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
@@ -17,7 +15,6 @@ const authorizeRole = (...roles) => {
     next();
   };
 };
-
 const methodNotAllowed = (allowed) => (req, res) => {
   res.set("Allow", allowed.join(", "));
   return res.status(405).json({
