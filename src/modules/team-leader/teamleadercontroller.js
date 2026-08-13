@@ -659,6 +659,123 @@ exports.monitorTeamProgress = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+/*
+|--------------------------------------------------------------------------
+| TEAM PERFORMANCE
+|--------------------------------------------------------------------------
+| GET /api/team-leader/team-performance
+|--------------------------------------------------------------------------
+*/
+
+exports.getTeamPerformance = async (req, res) => {
+  try {
+    const team = await getLeaderTeam(req.user.id);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        message: "No team found",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT
+        u.id AS user_id,
+        u.name,
+        u.email,
+        u.role,
+        u.status,
+
+        COUNT(t.id)::int AS total_tasks,
+
+        COUNT(t.id) FILTER (
+          WHERE t.status = 'done'
+        )::int AS completed_tasks,
+
+        COUNT(t.id) FILTER (
+          WHERE t.status IN ('todo', 'blocked')
+        )::int AS pending_tasks,
+
+        COUNT(t.id) FILTER (
+          WHERE t.status IN (
+            'in_progress',
+            'submitted',
+            'under_review'
+          )
+        )::int AS in_progress_tasks,
+
+        COUNT(t.id) FILTER (
+          WHERE t.status = 'blocked'
+        )::int AS blocked_tasks
+
+      FROM users u
+
+      LEFT JOIN tasks t
+        ON t.assignee_id = u.id
+
+      WHERE u.team_id = $1
+
+      GROUP BY
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        u.status
+
+      ORDER BY u.name ASC
+      `,
+      [team.id]
+    );
+
+    const performance = rows.map((member) => {
+      const total = Number(member.total_tasks) || 0;
+      const completed = Number(member.completed_tasks) || 0;
+
+      const progress =
+        total > 0
+          ? Math.round((completed / total) * 100)
+          : 0;
+
+      return {
+        user_id: member.user_id,
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        status: member.status,
+
+        total_tasks: total,
+        completed_tasks: completed,
+        pending_tasks: Number(member.pending_tasks) || 0,
+        in_progress_tasks:
+          Number(member.in_progress_tasks) || 0,
+        blocked_tasks:
+          Number(member.blocked_tasks) || 0,
+
+        progress,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        team: {
+          id: team.id,
+          name: team.name,
+        },
+        members: performance,
+      },
+    });
+
+  } catch (error) {
+    console.error("❌ getTeamPerformance:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load team performance",
+    });
+  }
+};
 
 exports.generateTeamReport = async (req, res) => {
   try {
