@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../../config/db');
@@ -259,7 +259,7 @@ async function changePasswordHandler(req, res) {
 }
 
 /**
- * Step 1 — check account exists before Firebase OTP on frontend
+ * Step 1 ΓÇö check account exists before Firebase OTP on frontend
  * POST /api/auth/forgot-password
  * Body: { email } OR { phone }
  *
@@ -324,7 +324,7 @@ async function forgotPasswordHandler(req, res) {
 }
 
 /**
- * Step 2 — after Firebase verifies email/phone OTP on frontend
+ * Step 2 ΓÇö after Firebase verifies email/phone OTP on frontend
  * POST /api/auth/reset-password
  * Body: {
  *   email OR phone,

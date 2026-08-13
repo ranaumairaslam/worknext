@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
@@ -19,8 +19,8 @@ const allowedOrigins = (
 app.use(
   cors({
     origin(origin, callback) {
-      // No Origin header (Postman/curl) or an allow-listed origin → OK.
-      // Important: deny with callback(null, false) — never callback(new Error()),
+      // No Origin header (Postman/curl) or an allow-listed origin ΓåÆ OK.
+      // Important: deny with callback(null, false) ΓÇö never callback(new Error()),
       // or Express turns it into a 500 for every browser request from another port.
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
       return callback(null, false);

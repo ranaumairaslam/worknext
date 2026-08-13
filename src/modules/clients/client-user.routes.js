@@ -1,12 +1,15 @@
-const express = require('express');
+﻿const express = require('express');
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
+const authorize = require('../../middleware/role.middleware');
 
 const router = express.Router();
 
 // GET /api/client/dashboard
 router.get(
-  '/projects/:projectId/progress',
+  '/dashboard',
+  protect,
+  authorize('client'),
   async (req, res, next) => {
     try {
       const clientQuery = [
@@ -24,18 +27,14 @@ router.get(
 
       const { rows: clientRows } = await pool.query(clientQuery, [req.user.id]);
 
-      if (!projectRows[0]) {
+      if (!clientRows[0]) {
         return res.status(404).json({
           success: false,
           message: 'Client profile not found',
         });
       }
 
-      /*
-      |--------------------------------------------------------------------------
-      | Task statistics
-      |--------------------------------------------------------------------------
-      */
+      const client = clientRows[0];
 
       const meetingsQuery = [
         'SELECT',
@@ -80,16 +79,11 @@ router.get(
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| GET /api/client/projects/:projectId/tasks
-|--------------------------------------------------------------------------
-| Get tasks of a specific client project
-|--------------------------------------------------------------------------
-*/
-
+// GET /api/client/projects
 router.get(
-  '/projects/:projectId/tasks',
+  '/projects',
+  protect,
+  authorize('client'),
   async (req, res, next) => {
     try {
       const query = [
@@ -117,17 +111,9 @@ router.get(
         'ORDER BY p.created_at DESC',
       ].join('\n');
 
-        ORDER BY
-          t.due_date ASC NULLS LAST,
-          t.created_at DESC
-        `,
-        [
-          projectId,
-          client.company_id,
-        ]
-      );
+      const { rows } = await pool.query(query, [req.user.id]);
 
-      return res.json({
+      res.json({
         success: true,
         projects: rows,
       });
