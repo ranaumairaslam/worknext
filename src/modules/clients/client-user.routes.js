@@ -9,18 +9,18 @@ router.get(
   '/projects/:projectId/progress',
   async (req, res, next) => {
     try {
-      const clientQuery = `
-        SELECT
-          cl.id,
-          cl.name,
-          cl.email,
-          cl.created_at,
-          c.id AS company_id,
-          c.name AS company_name
-        FROM clients cl
-        JOIN companies c ON c.id = cl.company_id
-        WHERE cl.user_id = $1
-      `;
+      const clientQuery = [
+        'SELECT',
+        '  cl.id,',
+        '  cl.name,',
+        '  cl.email,',
+        '  cl.created_at,',
+        '  c.id AS company_id,',
+        '  c.name AS company_name',
+        'FROM clients cl',
+        'JOIN companies c ON c.id = cl.company_id',
+        'WHERE cl.user_id = $1',
+      ].join('\n');
 
       const { rows: clientRows } = await pool.query(clientQuery, [req.user.id]);
 
@@ -37,22 +37,22 @@ router.get(
       |--------------------------------------------------------------------------
       */
 
-      const meetingsQuery = `
-        SELECT
-          m.id,
-          m.title,
-          m.description,
-          m.scheduled_at,
-          m.meeting_link,
-          m.status,
-          m.created_at,
-          c.name AS company_name
-        FROM meetings m
-        JOIN companies c ON c.id = m.company_id
-        WHERE m.client_id = $1
-          AND m.company_id = $2
-        ORDER BY m.scheduled_at ASC
-      `;
+      const meetingsQuery = [
+        'SELECT',
+        '  m.id,',
+        '  m.title,',
+        '  m.description,',
+        '  m.scheduled_at,',
+        '  m.meeting_link,',
+        '  m.status,',
+        '  m.created_at,',
+        '  c.name AS company_name',
+        'FROM meetings m',
+        'JOIN companies c ON c.id = m.company_id',
+        'WHERE m.client_id = $1',
+        '  AND m.company_id = $2',
+        'ORDER BY m.scheduled_at ASC',
+      ].join('\n');
 
       const { rows: meetings } = await pool.query(meetingsQuery, [
         client.id,
@@ -92,49 +92,30 @@ router.get(
   '/projects/:projectId/tasks',
   async (req, res, next) => {
     try {
-      const query = `
-        SELECT
-          p.id,
-          p.name,
-          p.description,
-          p.status,
-          p.start_date,
-          p.end_date,
-          p.created_at,
-          COUNT(t.id)::int AS total_tasks,
-          COUNT(
-            CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END
-          )::int AS completed_tasks,
-          COUNT(
-            CASE WHEN LOWER(t.status) IN ('in progress', 'in_progress') THEN 1 END
-          )::int AS in_progress_tasks,
-          COUNT(
-            CASE WHEN LOWER(t.status) IN ('pending', 'todo') THEN 1 END
-          )::int AS pending_tasks,
-          CASE
-            WHEN COUNT(t.id) = 0 THEN 0
-            ELSE ROUND(
-              (
-                COUNT(
-                  CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END
-                ) * 100.0
-              ) / COUNT(t.id)
-            )
-          END AS progress
-        FROM projects p
-        JOIN clients cl ON cl.id = p.client_id
-        LEFT JOIN tasks t ON t.project_id = p.id
-        WHERE cl.user_id = $1
-        GROUP BY
-          p.id,
-          p.name,
-          p.description,
-          p.status,
-          p.start_date,
-          p.end_date,
-          p.created_at
-        ORDER BY p.created_at DESC
-      `;
+      const query = [
+        'SELECT',
+        '  p.id,',
+        '  p.name,',
+        '  p.description,',
+        '  p.status,',
+        '  p.start_date,',
+        '  p.end_date,',
+        '  p.created_at,',
+        '  COUNT(t.id)::int AS total_tasks,',
+        "  COUNT(CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END)::int AS completed_tasks,",
+        "  COUNT(CASE WHEN LOWER(t.status) IN ('in progress', 'in_progress') THEN 1 END)::int AS in_progress_tasks,",
+        "  COUNT(CASE WHEN LOWER(t.status) IN ('pending', 'todo') THEN 1 END)::int AS pending_tasks,",
+        '  CASE',
+        '    WHEN COUNT(t.id) = 0 THEN 0',
+        "    ELSE ROUND((COUNT(CASE WHEN LOWER(t.status) IN ('completed', 'done') THEN 1 END) * 100.0) / COUNT(t.id))",
+        '  END AS progress',
+        'FROM projects p',
+        'JOIN clients cl ON cl.id = p.client_id',
+        'LEFT JOIN tasks t ON t.project_id = p.id',
+        'WHERE cl.user_id = $1',
+        'GROUP BY p.id, p.name, p.description, p.status, p.start_date, p.end_date, p.created_at',
+        'ORDER BY p.created_at DESC',
+      ].join('\n');
 
         ORDER BY
           t.due_date ASC NULLS LAST,
