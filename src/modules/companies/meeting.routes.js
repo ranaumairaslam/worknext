@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
 
@@ -32,7 +32,7 @@ function normalizeToWhome(value) {
     projectleader: "Project Leader",
     "project lead": "Project Leader",
     projectlead: "Project Leader",
-    // legacy aliases → Project Leader
+    // legacy aliases ΓåÆ Project Leader
     "team leads": "Project Leader",
     "team lead": "Project Leader",
     teamleads: "Project Leader",
@@ -52,7 +52,7 @@ function normalizeMeetingSource(value) {
   // compact key without spaces (e.g. googlemeet)
   const compact = key.replace(/\s+/g, "");
   if (KNOWN_MEETING_SOURCES[compact]) return KNOWN_MEETING_SOURCES[compact];
-  // another platform — keep user-provided label
+  // another platform ΓÇö keep user-provided label
   return trimmed;
 }
 
@@ -114,7 +114,7 @@ router.use(protect, loadCompany);
 
 const canManage = authorizeRole("company", "super_admin", "team_leader");
 
-// Forward declaration — assigned after listMeetingsHandler is defined
+// Forward declaration ΓÇö assigned after listMeetingsHandler is defined
 let listMeetingsHandler = async (req, res) => {
   return sendError(res, 500, "Meetings list handler not ready");
 };
@@ -384,9 +384,9 @@ async function fetchProjectLeader(db, companyId, projectId) {
 
 /**
  * Link teams to meeting and invite by audience:
- * - Team Meeting    → all team members
- * - Project Leader  → teams linked only (leader invited separately)
- * - Client          → teams optional (client invited separately)
+ * - Team Meeting    ΓåÆ all team members
+ * - Project Leader  ΓåÆ teams linked only (leader invited separately)
+ * - Client          ΓåÆ teams optional (client invited separately)
  */
 async function attachTeamsWithMembers(
   db,
@@ -1279,7 +1279,7 @@ async function updateMeetingHandler(req, res, next) {
         audience,
       );
     } else if (toWhome !== undefined && audience === "Team Meeting") {
-      // Audience type changed — re-apply invites for currently linked teams
+      // Audience type changed ΓÇö re-apply invites for currently linked teams
       const linked = await db.query(
         `SELECT t.id, t.name
          FROM meeting_teams mt

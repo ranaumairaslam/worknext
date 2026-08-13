@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
 const router = express.Router({ mergeParams: true });
@@ -428,7 +428,7 @@ router.get("/", async (req, res, next) => {
 router.all("/", methodNotAllowed(["GET", "POST"]));
 
 // =====================================================
-// TEAM LEADER DASHBOARD — projects led by logged-in user
+// TEAM LEADER DASHBOARD ΓÇö projects led by logged-in user
 // =====================================================
 
 router.get(
@@ -1016,7 +1016,7 @@ AND company_id=$2
 );
 
 // =====================================================
-// GET ALL COMPANY EMPLOYEES (for leader selection — any employee,
+// GET ALL COMPANY EMPLOYEES (for leader selection ΓÇö any employee,
 // not restricted to a specific team)
 // =====================================================
 
@@ -1110,7 +1110,7 @@ AND company_id=$2
         });
       }
 
-      // check employee — any employee in the company, not restricted
+      // check employee ΓÇö any employee in the company, not restricted
       // to already being a member of this team
 
       const employee = await pool.query(
