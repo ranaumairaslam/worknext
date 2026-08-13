@@ -30,12 +30,31 @@ const upload = multer({
   },
 });
 
+function formatRoleLabel(role) {
+  switch (role) {
+    case 'super_admin':
+      return 'Super Admin';
+    case 'company':
+      return 'Company';
+    case 'team_leader':
+      return 'Team Leader';
+    case 'team_member':
+      return 'Team Member';
+    case 'client':
+      return 'Client';
+    default:
+      return role || null;
+  }
+}
+
 function mapProfile(user) {
   return {
     id: user.id,
-    name: user.name,
+    fullName: user.name || null,
+    name: user.name || null,
     email: user.email,
-    role: user.role,
+    role: user.role || null,
+    roleLabel: formatRoleLabel(user.role),
     phone: user.phone || null,
     companyId: user.company_id || null,
     avatarUrl: user.avatar_url || null,
@@ -43,8 +62,66 @@ function mapProfile(user) {
 }
 
 /**
+ * PUT|PATCH /api/profile
+ * Update current user. Only fullName can be edited.
+ */
+async function updateProfileHandler(req, res) {
+  try {
+    const fullName = req.body?.fullName ?? req.body?.name;
+
+    if (fullName == null || String(fullName).trim() === '') {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'fullName is required',
+      });
+    }
+
+    const trimmed = String(fullName).trim();
+    if (trimmed.length < 2 || trimmed.length > 255) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'fullName must be between 2 and 255 characters',
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET name = $1
+       WHERE id = $2
+       RETURNING id, name, email, role, phone, company_id, avatar_url, avatar_public_id`,
+      [trimmed, req.user.id]
+    );
+
+    const user = result.rows[0];
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'User not found',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Profile updated successfully',
+      data: mapProfile(user),
+    });
+  } catch (error) {
+    console.error('UPDATE PROFILE ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      code: 500,
+      message: 'Server error',
+    });
+  }
+}
+
+/**
  * GET /api/profile
- * Returns current user profile. avatarUrl is null by default (no image).
+ * Returns current user profile including fullName. avatarUrl is null by default.
  */
 async function getProfileHandler(req, res) {
   try {
@@ -231,7 +308,12 @@ function handleMulter(req, res, next) {
 
 router.use(protect);
 
-router.route('/').get(getProfileHandler).all(methodNotAllowed(['GET']));
+router
+  .route('/')
+  .get(getProfileHandler)
+  .put(updateProfileHandler)
+  .patch(updateProfileHandler)
+  .all(methodNotAllowed(['GET', 'PUT', 'PATCH']));
 
 router
   .route('/avatar')
