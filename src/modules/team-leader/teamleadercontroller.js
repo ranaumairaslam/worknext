@@ -14,6 +14,29 @@ const getPagination = (query) => {
 };
 
 const getLeaderTeam = async (userId) => {
+  const userQuery = await pool.query(
+    `SELECT id, team_id, company_id, role FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+
+  const user = userQuery.rows[0];
+  if (!user) return null;
+
+  const teamId = user.team_id || null;
+
+  if (teamId) {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.name, t.company_id, t.leader_id, c.name AS company_name
+       FROM teams t
+       LEFT JOIN companies c ON c.id = t.company_id
+       WHERE t.id = $1
+       LIMIT 1`,
+      [teamId]
+    );
+
+    if (rows[0]) return rows[0];
+  }
+
   const { rows } = await pool.query(
     `SELECT t.id, t.name, t.company_id, t.leader_id, c.name AS company_name
      FROM teams t
@@ -56,24 +79,22 @@ const getMembers = async (teamId) => {
 const getTaskSummary = async (teamId) => {
   const { rows } = await pool.query(
     `SELECT
-    COUNT(*)::int AS total_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status = 'done'
-    )::int AS completed_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status IN ('todo','in_progress','blocked')
-    )::int AS pending_tasks
-
-FROM tasks t
-JOIN projects p
-    ON p.id = t.project_id
-WHERE p.team_id = $1;`,
+      COUNT(*)::int AS total_tasks,
+      COUNT(*) FILTER (WHERE t.status = 'done')::int AS completed_tasks,
+      COUNT(*) FILTER (WHERE t.status IN ('todo', 'blocked'))::int AS pending_tasks,
+      COUNT(*) FILTER (WHERE t.status IN ('in_progress', 'submitted', 'under_review'))::int AS in_progress_tasks
+    FROM tasks t
+    JOIN projects p ON p.id = t.project_id
+    WHERE p.team_id = $1;`,
     [teamId]
   );
 
-  return rows[0] || { total_tasks: 0, completed_tasks: 0, pending_tasks: 0 };
+  return rows[0] || {
+    total_tasks: 0,
+    completed_tasks: 0,
+    pending_tasks: 0,
+    in_progress_tasks: 0,
+  };
 };
 
 const getRecentTasks = async (teamId, limit = 5) => {
@@ -249,47 +270,136 @@ exports.viewTeamMembers = async (req, res) => {
 exports.createTask = async (req, res) => {
   try {
     const team = await getLeaderTeam(req.user.id);
+
     if (!team) {
-      return res.status(404).json({ success: false, message: "No team found" });
+      return res.status(404).json({
+        success: false,
+        message: "No team found",
+      });
     }
 
-    const { title, description, projectId, assigneeId, dueDate, priority = "medium" } = req.body;
+    const {
+      title,
+      description,
+      projectId,
+      assigneeId,
+      dueDate,
+      priority = "medium",
+    } = req.body;
+
+    // Task Name
     if (!title || !String(title).trim()) {
-      return res.status(400).json({ success: false, message: "Task title is required" });
-    }
-    if (!projectId) {
-      return res.status(400).json({ success: false, message: "Project ID is required" });
+      return res.status(400).json({
+        success: false,
+        message: "Task name is required",
+      });
     }
 
+    // Project
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        message: "Project is required",
+      });
+    }
+
+    // Check project belongs to leader's team
     const project = await pool.query(
-      `SELECT id FROM projects WHERE id = $1 AND team_id = $2 LIMIT 1`,
+      `
+      SELECT id
+      FROM projects
+      WHERE id = $1
+        AND team_id = $2
+      LIMIT 1
+      `,
       [projectId, team.id]
     );
+
     if (!project.rowCount) {
-      return res.status(404).json({ success: false, message: "Project not found in your team" });
+      return res.status(404).json({
+        success: false,
+        message: "Project not found in your team",
+      });
     }
 
+    // Get company
     let companyId = await getUserCompanyId(req.user.id);
+
     if (!companyId) {
       companyId = team.company_id;
     }
 
+    // Team member is optional
+    let validAssigneeId = null;
+
     if (assigneeId) {
       const assignee = await pool.query(
-        `SELECT id FROM users WHERE id = $1 AND team_id = $2 AND company_id = $3 LIMIT 1`,
+        `
+        SELECT id
+        FROM users
+        WHERE id = $1
+          AND team_id = $2
+          AND company_id = $3
+        LIMIT 1
+        `,
         [assigneeId, team.id, companyId]
       );
 
       if (!assignee.rowCount) {
-        return res.status(404).json({ success: false, message: "Assignee not found in your team" });
+        return res.status(404).json({
+          success: false,
+          message: "Team member not found in your team",
+        });
       }
+
+      validAssigneeId = assigneeId;
     }
 
+    // Validate priority
+    const normalizedPriority = String(priority).toLowerCase();
+
+    if (!["high", "medium", "low"].includes(normalizedPriority)) {
+      return res.status(400).json({
+        success: false,
+        message: "Priority must be high, medium, or low",
+      });
+    }
+
+    // Create task
     const { rows } = await pool.query(
-      `INSERT INTO tasks (title, description, project_id, company_id, assignee_id, status, priority, due_date)
-       VALUES ($1, $2, $3, $4, $5, 'todo', $6, $7)
-       RETURNING id, title, description, project_id, assignee_id, status, priority, due_date, created_at`,
-      [String(title).trim(), description || null, projectId, companyId, assigneeId || null, priority, dueDate || null]
+      `
+      INSERT INTO tasks (
+        title,
+        description,
+        project_id,
+        company_id,
+        assignee_id,
+        status,
+        priority,
+        due_date
+      )
+      VALUES ($1, $2, $3, $4, $5, 'todo', $6, $7)
+      RETURNING
+        id,
+        title,
+        description,
+        project_id,
+        company_id,
+        assignee_id,
+        status,
+        priority,
+        due_date,
+        created_at
+      `,
+      [
+        String(title).trim(),
+        description?.trim() || null,
+        projectId,
+        companyId,
+        validAssigneeId,
+        normalizedPriority,
+        dueDate || null,
+      ]
     );
 
     return res.status(201).json({
@@ -298,8 +408,12 @@ exports.createTask = async (req, res) => {
       data: rows[0],
     });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: err.message });
+    console.error("Create Task Error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
@@ -366,7 +480,8 @@ exports.viewTasks = async (req, res) => {
 
     const { page, limit, offset } = getPagination(req.query);
     const search = String(req.query.search || "").trim();
-    const status = ["todo", "in_progress", "done", "blocked"].includes(req.query.status)
+    const allowedStatuses = ["todo", "in_progress", "under_review", "submitted", "done", "blocked"];
+    const status = allowedStatuses.includes(req.query.status)
       ? req.query.status
       : null;
     const assigneeId = positiveInteger(req.query.assigneeId, 0);
@@ -527,29 +642,14 @@ exports.monitorTeamProgress = async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT
-    COUNT(*)::int AS total_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status='done'
-    )::int AS completed_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status='in_progress'
-    )::int AS in_progress_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status='blocked'
-    )::int AS blocked_tasks,
-
-    COUNT(*) FILTER (
-        WHERE t.status='todo'
-    )::int AS pending_tasks
-
-FROM tasks t
-JOIN projects p
-ON p.id=t.project_id
-
-WHERE p.team_id=$1;`,
+        COUNT(*)::int AS total_tasks,
+        COUNT(*) FILTER (WHERE t.status='done')::int AS completed_tasks,
+        COUNT(*) FILTER (WHERE t.status IN ('in_progress', 'submitted', 'under_review'))::int AS in_progress_tasks,
+        COUNT(*) FILTER (WHERE t.status='blocked')::int AS blocked_tasks,
+        COUNT(*) FILTER (WHERE t.status IN ('todo', 'blocked'))::int AS pending_tasks
+      FROM tasks t
+      JOIN projects p ON p.id=t.project_id
+      WHERE p.team_id=$1;`,
       [team.id]
     );
 

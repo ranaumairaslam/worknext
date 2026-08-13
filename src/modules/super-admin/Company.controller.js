@@ -23,7 +23,6 @@ async function createCompany(req, res, next) {
       payment,
     } = req.body;
 
-    // Validate password
     if (!password) {
       return res.status(400).json({
         success: false,
@@ -31,76 +30,56 @@ async function createCompany(req, res, next) {
       });
     }
 
+    // Run independent async work in parallel instead of sequentially
+    const [loginEmail, hashedPassword] = await Promise.all([
+      generateUniqueCompanyEmail(client, companyName, LOGIN_EMAIL_DOMAIN),
+      bcrypt.hash(password, 10),
+    ]);
+
     await client.query("BEGIN");
 
-    // Generate unique login email
-    const loginEmail = await generateUniqueCompanyEmail(
-      client,
-      companyName,
-      LOGIN_EMAIL_DOMAIN
-    );
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create company
-   const companyResult = await client.query(
-  `INSERT INTO companies
-  (
-    name,
-    contact_email,
-    phone,
-    address,
-    industry,
-    website,
-    revenue,
-    status,
-    created_at
-  )
-  VALUES
-  ($1,$2,$3,$4,$5,$6,$7,'active',NOW())
-  RETURNING
-    id,
-    name,
-    contact_email,
-    phone,
-    address,
-    industry,
-    website,
-    revenue,
-    status,
-    created_at`,
-  [
-    companyName,
-    contactEmail || null,
-    phone || null,
-    address || null,
-    industry || null,
-    website || null,
-    payment || 0,
-  ]
-);
-
-    const company = companyResult.rows[0];
-
-    // Create owner account
-    const userResult = await client.query(
-      `INSERT INTO users
-      (company_id, name, email, password, role, status, created_at)
-      VALUES ($1,$2,$3,$4,'company','active',NOW())
-      RETURNING id, name, email, role, status`,
-      [company.id, ownerName, loginEmail, hashedPassword]
-    );
-
-    const owner = userResult.rows[0];
-
-    // Update owner_id in companies table
-    await client.query(
-      "UPDATE companies SET owner_id = $1 WHERE id = $2",
-      [owner.id, company.id]
+    // Single round trip: insert company, insert user, patch owner_id, return both
+    const result = await client.query(
+      `WITH new_company AS (
+        INSERT INTO companies
+          (name, contact_email, phone, address, industry, website, revenue, status, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'active',NOW())
+        RETURNING id, name, contact_email, phone, address, industry, website, revenue, status, created_at
+      ),
+      new_user AS (
+        INSERT INTO users (company_id, name, email, password, role, status, created_at)
+        SELECT id, $8, $9, $10, 'company', 'active', NOW()
+        FROM new_company
+        RETURNING id, company_id, name, email, role, status
+      ),
+      updated_company AS (
+        UPDATE companies c
+        SET owner_id = nu.id
+        FROM new_user nu
+        WHERE c.id = nu.company_id
+        RETURNING c.id, c.name, c.contact_email, c.phone, c.address,
+                  c.industry, c.website, c.revenue, c.status, c.created_at, c.owner_id
+      )
+      SELECT
+        (SELECT row_to_json(updated_company) FROM updated_company) AS company,
+        (SELECT row_to_json(new_user) FROM new_user) AS owner`,
+      [
+        companyName,
+        contactEmail || null,
+        phone || null,
+        address || null,
+        industry || null,
+        website || null,
+        payment || 0,
+        ownerName,
+        loginEmail,
+        hashedPassword,
+      ]
     );
 
     await client.query("COMMIT");
+
+    const { company, owner } = result.rows[0];
 
     return res.status(201).json({
       success: true,

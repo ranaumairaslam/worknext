@@ -1,37 +1,13 @@
+// team-member/data/store.js
 const now = new Date();
 
 // =========================
-// Dummy Tasks
+// Task Data
 // =========================
-const tasks = [
-  {
-    taskId: "task-1",
-    title: "Build Login API",
-    description: "Develop login API using JWT authentication.",
-    assignedTo: 1,
-    priority: "high",
-    status: "todo",
-    dueDate: "2026-08-10"
-  },
-  {
-    taskId: "task-2",
-    title: "Dashboard UI",
-    description: "Complete Team Member Dashboard.",
-    assignedTo: 1,
-    priority: "medium",
-    status: "todo",
-    dueDate: "2026-08-12"
-  },
-  {
-    taskId: "task-3",
-    title: "Project API",
-    description: "Create CRUD APIs for Projects.",
-    assignedTo: 2,
-    priority: "low",
-    status: "in_progress",
-    dueDate: "2026-08-15"
-  }
-];
+// Assigned team-member tasks are now loaded from the database via the
+// /api/team-member/tasks/assigned endpoint. This in-memory task list is no
+// longer used for assigned task responses.
+const tasks = [];
 
 // =========================
 // Dummy Meetings
@@ -44,7 +20,7 @@ const meetings = [
     startTime: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
     endTime: new Date(now.getTime() + 90 * 60 * 1000).toISOString(),
     link: "https://meet.google.com/abc-defg-hij",
-    participants: [1, 2, 3],
+    participants: [37, 2, 3],                // ✅ You included
     status: "scheduled",
     location: "Online"
   },
@@ -55,7 +31,18 @@ const meetings = [
     startTime: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
     endTime: new Date(now.getTime() + 25 * 60 * 60 * 1000).toISOString(),
     link: "https://meet.google.com/xyz-abcd-123",
-    participants: [1, 4, 5],
+    participants: [37, 4, 5],                // ✅ You included
+    status: "scheduled",
+    location: "Online"
+  },
+  {
+    meetingId: "meeting-3",
+    title: "Client Demo",
+    description: "Present dashboard demo to client",
+    startTime: new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString(),
+    endTime: new Date(now.getTime() + 49 * 60 * 60 * 1000).toISOString(),
+    link: "https://meet.google.com/demo-2026-xyz",
+    participants: [37, 1, 4],                // ✅ You included
     status: "scheduled",
     location: "Online"
   }
