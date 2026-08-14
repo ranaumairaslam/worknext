@@ -1,12 +1,30 @@
+function normalizeRole(role) {
+  if (!role) return role;
+
+  const value = String(role).trim();
+  const lower = value.toLowerCase();
+
+  const aliases = {
+    superadmin: 'super_admin',
+    super_admin: 'super_admin',
+    companyadmin: 'company',
+    company_admin: 'company',
+    teamleader: 'team_leader',
+    team_leader: 'team_leader',
+    leader: 'team_leader',
+    teammember: 'team_member',
+    team_member: 'team_member',
+    member: 'team_member',
+  };
+
+  return aliases[lower] || value;
+}
+
 module.exports = function authorize(...requiredRoles) {
-  const allowed = requiredRoles.map((role) =>
-    role === 'superAdmin' ? 'super_admin' : role
-  );
+  const allowed = requiredRoles.map((role) => normalizeRole(role));
 
   return (req, res, next) => {
-    const userRole = req.user?.role;
-    const normalizedUserRole =
-      userRole === 'superAdmin' ? 'super_admin' : userRole;
+    const normalizedUserRole = normalizeRole(req.user?.role);
 
     if (!normalizedUserRole || !allowed.includes(normalizedUserRole)) {
       return res.status(403).json({
@@ -19,3 +37,5 @@ module.exports = function authorize(...requiredRoles) {
     next();
   };
 };
+
+module.exports.normalizeRole = normalizeRole;

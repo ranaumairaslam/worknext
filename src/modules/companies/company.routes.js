@@ -4,8 +4,12 @@
 const express = require('express');
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
+const authorize = require('../../middleware/role.middleware');
+const meetingRoutes = require('./meeting.routes');
 
 const router = express.Router();
+
+const canManageMeetings = authorize('company', 'super_admin', 'team_leader');
 
 const validateEmail = (value) => /^\S+@\S+\.\S+$/.test(String(value || '').trim());
 
@@ -210,14 +214,23 @@ router.get('/dashboard', async (req, res, next) => {
 // Mount sub-routers in workflow order:
 // Teams -> Projects -> Clients -> Reports
 // =======================================================
+
+// Cancel meeting — registered on company router so path always resolves
+router.patch('/scheduledMeetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+router.put('/scheduledMeetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+router.post('/scheduledMeetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+router.post('/scheduledMeetings/cancel', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+router.patch('/meetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+router.patch('/scheduled-meetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
+
 router.use('/teams', require('./team.routes'));
 router.use('/projects', require('./project.routes'));
 router.use('/employees', require('../employees/employee.routes'));
 router.use('/clients', require('./client.routes'));
 router.use('/tasks', require('../tasks/task.routes'));
-router.use('/meetings', require('./meeting.routes'));
-router.use('/scheduledMeetings', require('./meeting.routes'));
-router.use('/scheduled-meetings', require('./meeting.routes'));
+router.use('/meetings', meetingRoutes);
+router.use('/scheduledMeetings', meetingRoutes);
+router.use('/scheduled-meetings', meetingRoutes);
 router.use('/member-invites', require('./member-invite.routes'));
 router.use('/memberInvites', require('./member-invite.routes'));
 router.use('/revenues', require('./revenue.routes'));

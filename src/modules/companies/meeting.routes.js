@@ -1,6 +1,7 @@
 ﻿const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
+const authorize = require("../../middleware/role.middleware");
 
 const router = express.Router({ mergeParams: true });
 
@@ -56,18 +57,7 @@ function normalizeMeetingSource(value) {
   return trimmed;
 }
 
-const authorizeRole =
-  (...roles) =>
-  (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        code: 403,
-        message: "You do not have access to this resource",
-      });
-    }
-    next();
-  };
+const canManage = authorize("company", "super_admin", "team_leader");
 
 const methodNotAllowed = (allowed) => (req, res) => {
   res.set("Allow", allowed.join(", "));
@@ -112,7 +102,15 @@ async function loadCompany(req, res, next) {
 
 router.use(protect, loadCompany);
 
-const canManage = authorizeRole("company", "super_admin", "team_leader");
+// Forward declaration — assigned after handler is defined
+let cancelMeetingHandler = async (req, res) => {
+  return sendError(res, 500, "Cancel meeting handler not ready");
+};
+
+// Forward declaration — assigned after handler is defined
+let upcomingMeetingsHandler = async (req, res) => {
+  return sendError(res, 500, "Upcoming meetings handler not ready");
+};
 
 // Forward declaration ΓÇö assigned after listMeetingsHandler is defined
 let listMeetingsHandler = async (req, res) => {
@@ -120,6 +118,18 @@ let listMeetingsHandler = async (req, res) => {
 };
 
 // Early aliases so Postman paths always resolve (before /:meetingId)
+router.get("/upcoming", (req, res, next) => upcomingMeetingsHandler(req, res, next));
+router.all("/upcoming", methodNotAllowed(["GET"]));
+router.patch("/cancel/:meetingId", canManage, (req, res, next) =>
+  cancelMeetingHandler(req, res, next),
+);
+router.put("/cancel/:meetingId", canManage, (req, res, next) =>
+  cancelMeetingHandler(req, res, next),
+);
+router.post("/cancel/:meetingId", canManage, (req, res, next) =>
+  cancelMeetingHandler(req, res, next),
+);
+router.all("/cancel/:meetingId", methodNotAllowed(["PUT", "PATCH", "POST"]));
 router.get("/list", (req, res, next) => listMeetingsHandler(req, res, next));
 router.post("/list", (req, res, next) =>
   listMeetingsHandler(req, res, next, { requireToWhom: true }),
@@ -1045,6 +1055,56 @@ listMeetingsHandler = async function listMeetingsHandler(
   }
 };
 
+upcomingMeetingsHandler = async function upcomingMeetingsHandler(req, res, next) {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        m.id,
+        m.title AS "Title",
+        m.to_whom AS "toWhom",
+        m.to_whom AS "toWhome",
+        m.invitee_user_id,
+        m.project_id,
+        p.name AS "ProjectName",
+        m.scheduled_date AS date,
+        TO_CHAR(m.scheduled_time, 'HH24:MI') AS time,
+        m.scheduled_at,
+        m.mode AS "MeetingSource",
+        m.meeting_link AS "MeetingLink",
+        m.status,
+        m.description,
+        m.created_at,
+        m.updated_at
+      FROM meetings m
+      LEFT JOIN projects p ON p.id = m.project_id
+      WHERE m.company_id = $1
+        AND m.status IN ('scheduled', 'live')
+        AND (
+          (m.scheduled_at IS NOT NULL AND m.scheduled_at >= NOW())
+          OR (
+            m.scheduled_at IS NULL
+            AND m.scheduled_date IS NOT NULL
+            AND m.scheduled_date >= CURRENT_DATE
+          )
+        )
+      ORDER BY m.scheduled_at ASC NULLS LAST, m.scheduled_date ASC, m.scheduled_time ASC
+      `,
+      [req.company.id],
+    );
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Upcoming meetings fetched successfully",
+      count: rows.length,
+      data: rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 router.get("/", (req, res, next) => listMeetingsHandler(req, res, next));
 
 async function getMeetingHandler(req, res, next) {
@@ -1072,6 +1132,46 @@ async function getMeetingHandler(req, res, next) {
     next(error);
   }
 }
+
+async function cancelMeetingHandlerImpl(req, res, next) {
+  try {
+    const meetingId = parseMeetingId(
+      req.params.meetingId ??
+        req.body?.meetingId ??
+        req.body?.MeetingId ??
+        req.body?.id,
+    );
+    if (!meetingId) {
+      return sendError(res, 400, "Invalid meeting id", [
+        {
+          field: "meetingId",
+          message: "Use /scheduledMeetings/cancel/12",
+        },
+      ]);
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE meetings
+       SET status = 'cancelled', updated_at = NOW()
+       WHERE id = $1 AND company_id = $2
+       RETURNING id, title, status`,
+      [meetingId, req.company.id],
+    );
+
+    if (!rows[0]) return sendError(res, 404, "Meeting not found");
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: "Meeting cancelled successfully",
+      data: rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+cancelMeetingHandler = cancelMeetingHandlerImpl;
 
 router.get("/meetingId/:meetingId", getMeetingHandler);
 router.get("/:meetingId", getMeetingHandler);
@@ -1462,6 +1562,19 @@ router.post("/edit", canManage, async (req, res, next) => {
   req.params.meetingId = String(meetingId);
   return updateMeetingHandler(req, res, next);
 });
+
+router.post("/cancel", canManage, async (req, res, next) => {
+  const body = req.body || {};
+  const meetingId = parseMeetingId(body.meetingId ?? body.MeetingId ?? body.id);
+  if (!meetingId) {
+    return sendError(res, 400, "meetingId is required", [
+      { field: "meetingId", message: "Pass meetingId in body to cancel" },
+    ]);
+  }
+  req.params.meetingId = String(meetingId);
+  return cancelMeetingHandler(req, res, next);
+});
+router.all("/cancel", methodNotAllowed(["POST"]));
 router.all("/edit", methodNotAllowed(["POST"]));
 
 // =====================================================
@@ -1775,3 +1888,4 @@ router.all("/", methodNotAllowed(COLLECTION_METHODS));
 router.all("/:meetingId", methodNotAllowed(ITEM_METHODS));
 
 module.exports = router;
+module.exports.cancelMeetingHandler = cancelMeetingHandlerImpl;
