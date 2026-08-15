@@ -11,6 +11,17 @@ const pool = require('../../config/db');
 async function migrate() {
   console.log('Starting workflow schema migration...');
   try {
+    console.log('Ensuring companies table columns exist...');
+    await pool.query(`
+      ALTER TABLE companies ADD COLUMN IF NOT EXISTS company_size VARCHAR(100);
+    `);
+    await pool.query(`
+      ALTER TABLE companies ADD COLUMN IF NOT EXISTS payment_receipt TEXT;
+    `);
+    await pool.query(`
+      ALTER TABLE companies ADD COLUMN IF NOT EXISTS payment_receipt_public_id TEXT;
+    `);
+
     // TEAMS table (Step 2 & 3: Create Team, Assign Team Leader)
     console.log('Ensuring teams table exists...');
     await pool.query(`
