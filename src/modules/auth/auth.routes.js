@@ -4,10 +4,11 @@ const jwt = require('jsonwebtoken');
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
 const {
-  verifyFirebaseIdToken,
-  updateFirebasePasswordByEmailOrPhone,
-  isFirebaseConfigured,
-} = require('../../config/firebase');
+  createAndSendOtp,
+  verifyOtp,
+  mapOtpError,
+  isMailConfigured,
+} = require('./password-reset.service');
 
 const router = express.Router();
 
@@ -259,11 +260,9 @@ async function changePasswordHandler(req, res) {
 }
 
 /**
- * Step 1 ΓÇö check account exists before Firebase OTP on frontend
+ * Step 1 — send OTP to registered email
  * POST /api/auth/forgot-password
- * Body: { email } OR { phone }
- *
- * OTP is sent by Firebase Auth on the client (not this API).
+ * Body: { email } OR { phone }  (phone not supported yet — use email)
  */
 async function forgotPasswordHandler(req, res) {
   try {
@@ -276,7 +275,7 @@ async function forgotPasswordHandler(req, res) {
       });
     }
 
-    const { email, phone, channel } = resolved;
+    const { email, phone, channel, destination } = resolved;
     const user = email
       ? await findUserByEmail(email)
       : await findUserByPhone(phone);
@@ -300,21 +299,65 @@ async function forgotPasswordHandler(req, res) {
       });
     }
 
-    return res.status(200).json({
+    const otpResult = await createAndSendOtp({
+      userId: user.id,
+      channel,
+      destination,
+      userName: user.name,
+    });
+
+    const response = {
       success: true,
       code: 200,
-      message:
-        'Account found. Send OTP with Firebase Auth on the client, then call reset-password with firebaseIdToken.',
+      message: otpResult.sent
+        ? 'Password reset OTP sent to your email'
+        : 'Password reset OTP generated (development mode — check server console)',
       data: {
         channel,
         email: channel === 'email' ? user.email : null,
         phone: channel === 'phone' ? normalizePhone(user.phone) : null,
-        firebaseConfigured: isFirebaseConfigured(),
-        nextStep: 'Use Firebase Auth (phone OTP or email link), then POST /api/auth/reset-password',
+        emailConfigured: isMailConfigured(),
+        expiresInMinutes: otpResult.expiresInMinutes,
+        nextStep:
+          'POST /api/auth/reset-password with email, otp, newPassword, confirmPassword',
       },
-    });
+    };
+
+    if (otpResult.devMode && otpResult.otp) {
+      response.data.devOtp = otpResult.otp;
+      if (otpResult.mailError) {
+        response.data.mailError = otpResult.mailError;
+      }
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     console.error('FORGOT PASSWORD ERROR:', error);
+
+    if (error.code === 'MAIL_NOT_CONFIGURED') {
+      return res.status(503).json({
+        success: false,
+        code: 503,
+        message: error.message,
+      });
+    }
+
+    if (error.code === 'MAIL_SEND_FAILED') {
+      return res.status(503).json({
+        success: false,
+        code: 503,
+        message: error.message,
+      });
+    }
+
+    if (error.code === 'PHONE_RESET_NOT_SUPPORTED') {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: error.message,
+      });
+    }
+
     return res.status(500).json({
       success: false,
       code: 500,
@@ -324,11 +367,11 @@ async function forgotPasswordHandler(req, res) {
 }
 
 /**
- * Step 2 ΓÇö after Firebase verifies email/phone OTP on frontend
+ * Step 2 — verify OTP and set new password
  * POST /api/auth/reset-password
  * Body: {
  *   email OR phone,
- *   firebaseIdToken,
+ *   otp,
  *   newPassword,
  *   confirmPassword
  * }
@@ -344,15 +387,14 @@ async function resetPasswordHandler(req, res) {
       });
     }
 
-    const { email, phone, channel } = resolved;
-    const { firebaseIdToken, newPassword, confirmPassword } = req.body;
+    const { email, phone, channel, destination } = resolved;
+    const { otp, newPassword, confirmPassword } = req.body;
 
-    if (!firebaseIdToken) {
+    if (!otp || !String(otp).trim()) {
       return res.status(400).json({
         success: false,
         code: 400,
-        message:
-          'firebaseIdToken is required (verify email/phone OTP with Firebase Auth first)',
+        message: 'otp is required',
       });
     }
 
@@ -362,43 +404,6 @@ async function resetPasswordHandler(req, res) {
         success: false,
         code: 400,
         message: passwordError,
-      });
-    }
-
-    let decoded;
-    try {
-      decoded = await verifyFirebaseIdToken(firebaseIdToken);
-    } catch (err) {
-      if (err.code === 'FIREBASE_NOT_CONFIGURED') {
-        return res.status(503).json({
-          success: false,
-          code: 503,
-          message: err.message,
-        });
-      }
-      return res.status(401).json({
-        success: false,
-        code: 401,
-        message: 'Invalid or expired Firebase token',
-      });
-    }
-
-    const tokenEmail = normalizeEmail(decoded.email);
-    const tokenPhone = normalizePhone(decoded.phone_number);
-
-    if (channel === 'email') {
-      if (!tokenEmail || tokenEmail !== email) {
-        return res.status(403).json({
-          success: false,
-          code: 403,
-          message: 'Firebase token email does not match the provided email',
-        });
-      }
-    } else if (!tokenPhone || !phonesMatch(tokenPhone, phone)) {
-      return res.status(403).json({
-        success: false,
-        code: 403,
-        message: 'Firebase token phone does not match the provided phone',
       });
     }
 
@@ -422,22 +427,25 @@ async function resetPasswordHandler(req, res) {
       });
     }
 
+    const otpCheck = await verifyOtp({
+      userId: user.id,
+      destination,
+      otp: String(otp).trim(),
+    });
+
+    if (!otpCheck.valid) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: mapOtpError(otpCheck.reason),
+      });
+    }
+
     const hashed = await bcrypt.hash(newPassword, 10);
     await pool.query(
       'UPDATE users SET password = $1, token = NULL WHERE id = $2',
       [hashed, user.id]
     );
-
-    let firebaseSync = { updated: false };
-    try {
-      firebaseSync = await updateFirebasePasswordByEmailOrPhone({
-        email: normalizeEmail(user.email) || tokenEmail,
-        phone: normalizePhone(user.phone) || tokenPhone,
-        newPassword,
-      });
-    } catch (err) {
-      console.error('Firebase password sync error:', err.message);
-    }
 
     return res.status(200).json({
       success: true,
@@ -448,7 +456,6 @@ async function resetPasswordHandler(req, res) {
         email: user.email,
         phone: user.phone || null,
         channel,
-        firebasePasswordUpdated: Boolean(firebaseSync.updated),
       },
     });
   } catch (error) {
