@@ -6,17 +6,21 @@ const authorize = require('../../middleware/role.middleware');
 const {
   validateCreateCompany,
   validateCompanyQuery,
+  validateUpdateCompany,
 } = require('./Company.validator');
 
 const {
   handleCreateCompanyUpload,
   normalizeCreateCompanyFields,
+  normalizeUpdateCompanyFields,
 } = require('./Company.middleware');
 
 const {
   createCompany,
   getAllCompanies,
   getCompanyById,
+  updateCompany,
+  deleteCompany,
   getDashboard,
   getRevenue,
   exportRevenue,
@@ -57,7 +61,14 @@ router
 router
   .route('/companies/:companyId')
   .get(...superAdminOnly, getCompanyById)
-  .all(methodNotAllowed(['GET']));
+  .put(
+    ...superAdminOnly,
+    normalizeUpdateCompanyFields,
+    validateUpdateCompany,
+    updateCompany
+  )
+  .delete(...superAdminOnly, deleteCompany)
+  .all(methodNotAllowed(['GET', 'PUT', 'DELETE']));
 
 router
   .route('/revenue/export')
