@@ -383,10 +383,17 @@ const createCompany = async (req, res, next) => {
         ownerName,
         loginEmail,
         hashedPassword,
-        'companyAdmin',
+        'company',
         company.id,
         'active',
       ]
+    );
+
+    await dbClient.query(
+      `UPDATE companies
+       SET owner_id = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [userRows[0].id, company.id]
     );
 
 
@@ -521,6 +528,7 @@ const getAllCompanies = async (
         WHERE company_id = c.id
 
           AND LOWER(role) IN (
+            'company',
             'companyadmin',
             'company_admin'
           )
@@ -740,6 +748,7 @@ const getCompanyById = async (
         WHERE company_id = c.id
 
           AND LOWER(role) IN (
+            'company',
             'companyadmin',
             'company_admin'
           )
@@ -834,7 +843,7 @@ const COMPANY_DETAIL_SELECT = `
     SELECT id, name, email, role, status
     FROM users
     WHERE company_id = c.id
-      AND LOWER(role) IN ('companyadmin', 'company_admin')
+      AND LOWER(role) IN ('company', 'companyadmin', 'company_admin')
     ORDER BY id ASC
     LIMIT 1
   ) u ON true

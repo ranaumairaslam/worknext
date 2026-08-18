@@ -2,6 +2,7 @@
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const pool = require("../../config/db");
+const { normalizeRole } = require("../../middleware/role.middleware");
 
 const router = express.Router({ mergeParams: true });
 
@@ -11,7 +12,8 @@ const validateEmail = (value) =>
 const authorizeRole =
   (...roles) =>
   (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const allowed = roles.map((role) => normalizeRole(role));
+    if (!allowed.includes(normalizeRole(req.user?.role))) {
       return res.status(403).json({
         success: false,
         code: 403,

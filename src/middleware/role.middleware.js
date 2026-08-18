@@ -4,11 +4,13 @@ function normalizeRole(role) {
   const value = String(role).trim();
   const lower = value.toLowerCase();
 
-  const aliases = {
+    const aliases = {
     superadmin: 'super_admin',
     super_admin: 'super_admin',
+    company: 'company',
     companyadmin: 'company',
     company_admin: 'company',
+    'company admin': 'company',
     teamleader: 'team_leader',
     team_leader: 'team_leader',
     leader: 'team_leader',
@@ -17,7 +19,7 @@ function normalizeRole(role) {
     member: 'team_member',
   };
 
-  return aliases[lower] || value;
+  return aliases[lower] || lower;
 }
 
 module.exports = function authorize(...requiredRoles) {

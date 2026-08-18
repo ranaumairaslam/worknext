@@ -9,6 +9,7 @@ const {
   mapOtpError,
   isMailConfigured,
 } = require('./password-reset.service');
+const { normalizeRole } = require('../../middleware/role.middleware');
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ function phonesMatch(a, b) {
 }
 
 function getDashboardUrl(role) {
-  switch (role) {
+  switch (normalizeRole(role)) {
     case 'super_admin':
       return '/api/super-admin/dashboard';
     case 'company':
@@ -149,7 +150,12 @@ async function loginHandler(req, res) {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      {
+        id: user.id,
+        email: user.email,
+        role: normalizeRole(user.role),
+        companyId: user.company_id || null,
+      },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
     );
@@ -168,7 +174,8 @@ async function loginHandler(req, res) {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        role: normalizeRole(user.role),
+        companyId: user.company_id || null,
         avatarUrl: user.avatar_url || null,
         dashboard: getDashboardUrl(user.role),
       },

@@ -1,0 +1,383 @@
+WorkNest API list
+Base URL: http://localhost:5000
+All requests return JSON.
+
+Auth header (after login):
+Authorization: Bearer <token>
+Content-Type: application/json
+
+Roles
+- super_admin  -> Super Admin APIs
+- company      -> Company APIs (login email from Create Company)
+- team_leader  -> Team Leader APIs
+- team_member  -> Team Member APIs
+- client       -> Client APIs
+
+Use a FRESH login token. Old tokens with role companyAdmin will 403 on company create APIs.
+
+
+================================================================
+PUBLIC
+================================================================
+
+GET /
+{}
+Expected: 200 { success: true, message: "Auth API is running" }
+
+POST /api/dev/super-admin-token
+{}
+Expected: 200 token (local testing only)
+
+POST /api/auth/login
+{ "email": "act@example.com", "password": "your-password" }
+Expected: 200 { success, token, user }
+
+POST /api/login
+Same body as /api/auth/login
+
+POST /api/auth/forgot-password
+{ "email": "act@example.com" }
+Expected: 200 OTP sent / generated
+
+POST /api/auth/reset-password
+{
+  "email": "act@example.com",
+  "otp": "123456",
+  "newPassword": "newpass123",
+  "confirmPassword": "newpass123"
+}
+
+POST /api/auth/change-password
+Header: Bearer token
+{
+  "currentPassword": "oldpass",
+  "newPassword": "newpass123",
+  "confirmPassword": "newpass123"
+}
+
+
+================================================================
+SUPER ADMIN  (role: super_admin)
+================================================================
+
+GET /api/super-admin/dashboard
+
+GET /api/super-admin/companies
+GET /api/super-admin/companies?status=active&payment_status=pending
+
+POST /api/super-admin/companies
+Body type: form-data
+CompanyName=Code Craft
+Industry=Software
+AccountOwner=Ali Khan
+CompanyLoginEmail=act@example.com
+CompanyLoginPassword=pass123
+CompanySize=11-50
+Payment=5000
+Location=Lahore, Pakistan
+CompanyStatus=active
+PaymentStatus=pending
+PaymentReceipt=<image file>   (required if PaymentStatus=paid)
+
+GET /api/super-admin/companies/:id
+Example: GET /api/super-admin/companies/22
+
+PUT /api/super-admin/companies/:id
+{
+  "companyName": "Code Craft",
+  "status": "active",
+  "industry": "Software",
+  "address": "Lahore, Pakistan",
+  "PaymentStatus": "paid"
+}
+status: active | inactive | pending | suspended
+PaymentStatus: paid | pending | failed | cancelled
+
+DELETE /api/super-admin/companies/:id
+
+GET /api/super-admin/revenue
+GET /api/super-admin/revenue/export
+Expected: Excel file download
+
+
+================================================================
+COMPANY  (role: company)  Header: Bearer company token
+================================================================
+
+GET /api/company/dashboard
+GET /api/company/profile
+PUT /api/company/profile
+{ "name": "Code Craft", "address": "Lahore", "industry": "Software" }
+
+----- Teams -----
+POST /api/company/teams
+POST /api/company/team
+{
+  "name": "SEO Team",
+  "description": "SEO Projects"
+}
+Optional: "TeamLeaderName": "Ayaz"
+
+GET /api/company/teams
+GET /api/company/teams/:teamId
+PUT /api/company/teams/:teamId
+{ "name": "SEO Team Updated", "description": "Updated" }
+DELETE /api/company/teams/:teamId
+
+POST /api/company/teams/register-member
+{ "TeamId": 20, "EmployeeName": "Ali Raza" }
+
+----- Employees -----
+POST /api/company/employees
+{
+  "EmployeeName": "Sara Ahmed",
+  "email": "sara@example.com",
+  "password": "pass123",
+  "role": "team_member",
+  "TeamName": "SEO Team"
+}
+role: team_member | team_leader
+
+GET /api/company/employees
+GET /api/company/employees/:employeeId
+PUT /api/company/employees/:employeeId
+{ "EmployeeName": "Sara Ahmed", "status": "active" }
+DELETE /api/company/employees/:employeeId
+
+----- Clients -----
+POST /api/company/clients
+POST /api/company/client
+{
+  "ClientName": "ABC Traders",
+  "Email": "client@example.com",
+  "password": "pass123",
+  "projectName": "Website Redesign",
+  "ProjectDescription": "New company website"
+}
+
+GET /api/company/clients
+GET /api/company/clients/:clientId
+PUT /api/company/clients/:clientId
+{ "ClientName": "ABC Traders Updated" }
+DELETE /api/company/clients/:clientId
+
+----- Projects -----
+POST /api/company/projects
+{
+  "projectName": "Website Redesign",
+  "description": "Client website",
+  "TeamLeaderName": "Ayaz",
+  "ProjectTeam": "SEO Team",
+  "ProjectStatus": "active",
+  "ProjectPriority": "high",
+  "date": "2026-08-20",
+  "clientName": "ABC Traders"
+}
+
+GET /api/company/projects
+GET /api/company/projects/:projectId
+PUT /api/company/projects/:projectId
+DELETE /api/company/projects/:projectId
+GET /api/company/projects/:projectId/client
+GET /api/company/projects/:projectId/tasks
+POST /api/company/projects/:projectId/tasks
+{ "title": "Homepage", "description": "Build homepage", "priority": "high" }
+
+GET /api/company/projects/:id/progress
+POST /api/company/projects/:id/progress
+{ "progress": 40, "note": "Design done" }
+
+----- Tasks -----
+GET /api/company/tasks
+POST /api/company/tasks
+{
+  "projectId": 1,
+  "title": "Homepage",
+  "description": "Build homepage",
+  "priority": "medium"
+}
+GET /api/company/tasks/:taskId
+PUT /api/company/tasks/:taskId
+{ "title": "Homepage v2", "status": "in_progress" }
+DELETE /api/company/tasks/:taskId
+
+----- Meetings -----
+POST /api/company/scheduledMeetings
+POST /api/company/meetings
+{
+  "Title": "Sprint Planning",
+  "toWhome": "Team Meeting",
+  "date": "2026-08-25",
+  "time": "10:00",
+  "MeetingSource": "Google Meet",
+  "MeetingLink": "https://meet.google.com/abc-defg-hij",
+  "Teams": "SEO Team"
+}
+toWhome: Team Meeting | Client | Project Leader
+Client example extra fields: "ClientName": "ABC Traders"
+Project Leader extra fields: "ProjectName": "Website Redesign"
+
+GET /api/company/scheduledMeetings
+GET /api/company/scheduledMeetings/upcoming
+GET /api/company/scheduledMeetings/:meetingId
+PATCH /api/company/scheduledMeetings/cancel/:meetingId
+DELETE /api/company/scheduledMeetings/:meetingId
+
+----- Member invites -----
+POST /api/company/member-invites
+{
+  "meetingId": 1,
+  "MemberFrom": "Team",
+  "TeamName": "SEO Team"
+}
+
+GET /api/company/member-invites/meeting/:meetingId
+
+----- Revenue -----
+POST /api/company/revenues
+{
+  "ProjectName": "Website Redesign",
+  "ClientName": "ABC Traders",
+  "Amount": 50000,
+  "Date": "2026-08-18",
+  "status": "pending"
+}
+status: pending | complete
+
+GET /api/company/revenues
+GET /api/company/revenues/:revenueId
+PUT /api/company/revenues/:revenueId
+{ "Amount": 60000, "status": "complete" }
+DELETE /api/company/revenues/:revenueId
+
+----- Reports -----
+GET /api/company/reports/summary
+GET /api/company/reports/projects
+GET /api/company/reports/teams
+GET /api/company/reports/clients
+GET /api/company/reports/revenue
+
+
+================================================================
+TEAM LEADER  (role: team_leader)
+================================================================
+
+GET /api/team-leader/test
+GET /api/team-leader/dashboard
+GET /api/team-leader/projects
+GET /api/team-leader/members
+POST /api/team-leader/members
+{ "Employee": "Sara Ahmed" }
+
+GET /api/team-leader/teams/members?TeamName=SEO Team
+
+POST /api/team-leader/tasks/assign
+{
+  "TaskName": "Keyword research",
+  "TaskDescription": "Find target keywords",
+  "TeamName": "SEO Team",
+  "TeamMemberName": "Sara Ahmed",
+  "Priority": "high",
+  "Date": "2026-08-25"
+}
+PUT /api/team-leader/tasks/assign
+{ "TaskName": "Keyword research", "Priority": "medium" }
+DELETE /api/team-leader/tasks/assign
+{ "TaskName": "Keyword research" }
+
+GET /api/team-leader/tasks
+POST /api/team-leader/tasks
+{ "title": "Audit site", "description": "Technical SEO", "priority": "high" }
+
+PUT /api/team-leader/tasks/:taskId/assign
+{ "assignedTo": 51 }
+PUT /api/team-leader/tasks/:taskId/priority
+{ "priority": "high" }
+PUT /api/team-leader/tasks/:taskId/approve
+PUT /api/team-leader/tasks/:taskId/revision
+{ "reviewNote": "Please add more keywords" }
+
+GET /api/team-leader/tasks/submitted
+GET /api/team-leader/progress
+GET /api/team-leader/reports
+
+
+================================================================
+TEAM MEMBER  (role: team_member)
+================================================================
+
+GET /api/team-member/dashboard
+GET /api/team-member/tasks/assigned
+GET /api/team-member/tasks/:taskId
+POST /api/team-member/tasks/:taskId/start
+POST /api/team-member/tasks/:taskId/submit
+{ "note": "Work completed" }
+GET /api/team-member/tasks/submissions
+GET /api/team-member/tasks/submissions/:submissionId
+GET /api/team-member/meetings/upcoming
+POST /api/team-member/meetings/:meetingId/join
+
+
+================================================================
+CLIENT  (role: client)
+================================================================
+
+GET /api/client/dashboard
+GET /api/client/projects
+
+
+================================================================
+NOTIFICATIONS  (any logged-in user)
+================================================================
+
+GET /api/notifications
+POST /api/notifications
+{
+  "recipientEmail": "sara@example.com",
+  "type": "task_assigned",
+  "title": "New task assigned",
+  "message": "You were assigned Keyword research",
+  "link": "/tasks/12"
+}
+PATCH /api/notifications
+{ "notificationId": 1 }
+or
+{ "markAll": true }
+
+GET /api/notifications/settings
+PUT /api/notifications/settings
+{
+  "emailAlerts": true,
+  "pushNotifications": true,
+  "taskUpdates": true,
+  "weeklySummary": false,
+  "newClientAdded": true
+}
+
+
+================================================================
+PROFILE  (any logged-in user)
+================================================================
+
+GET /api/profile
+PUT /api/profile
+{ "name": "Ali Khan", "phone": "03001234567" }
+POST /api/profile/avatar
+Body type: form-data, file field = image
+DELETE /api/profile/avatar
+
+
+================================================================
+EXPECTED RESPONSES
+================================================================
+
+200/201  success: true
+400      validation failed (API is running, fix body)
+401      missing/invalid token
+403      wrong role or old token — login again
+404      record not found (API is running)
+405      wrong HTTP method
+500      server error
+
+Wrong URL returns:
+{ "success": false, "message": "Route not found" }
