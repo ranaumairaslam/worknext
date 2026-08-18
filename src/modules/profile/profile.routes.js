@@ -21,7 +21,7 @@ const methodNotAllowed = (allowed) => (req, res) => {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter(req, file, cb) {
     if (!file.mimetype || !file.mimetype.startsWith('image/')) {
       return cb(new Error('Only image files are allowed'));
@@ -61,10 +61,6 @@ function mapProfile(user) {
   };
 }
 
-/**
- * PUT|PATCH /api/profile
- * Update current user. Only fullName can be edited.
- */
 async function updateProfileHandler(req, res) {
   try {
     const fullName = req.body?.fullName ?? req.body?.name;
@@ -119,10 +115,6 @@ async function updateProfileHandler(req, res) {
   }
 }
 
-/**
- * GET /api/profile
- * Returns current user profile including fullName. avatarUrl is null by default.
- */
 async function getProfileHandler(req, res) {
   try {
     const result = await pool.query(
@@ -154,11 +146,6 @@ async function getProfileHandler(req, res) {
   }
 }
 
-/**
- * POST /api/profile/avatar
- * multipart/form-data field name: "image" (or "avatar" / "file")
- * Uploads to Cloudinary and saves URL in users.avatar_url
- */
 async function uploadAvatarHandler(req, res) {
   try {
     if (!isCloudinaryConfigured()) {
@@ -204,7 +191,6 @@ async function uploadAvatarHandler(req, res) {
       [uploaded.secure_url, uploaded.public_id, req.user.id]
     );
 
-    // Best-effort cleanup if public_id changed
     if (oldPublicId && oldPublicId !== uploaded.public_id) {
       destroyCloudinaryImage(oldPublicId).catch(() => {});
     }
@@ -239,10 +225,6 @@ async function uploadAvatarHandler(req, res) {
   }
 }
 
-/**
- * DELETE /api/profile/avatar
- * Removes profile picture (back to no image).
- */
 async function deleteAvatarHandler(req, res) {
   try {
     const existing = await pool.query(
@@ -281,7 +263,6 @@ async function deleteAvatarHandler(req, res) {
 }
 
 function handleMulter(req, res, next) {
-  // Accept any field name (image, avatar, file, picture, photo, etc.)
   upload.any()(req, res, (err) => {
     if (err) {
       const message =
