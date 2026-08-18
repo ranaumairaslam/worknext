@@ -73,6 +73,11 @@ function normalizeUpdateCompanyFields(req, res, next) {
       body.Location,
       body.location
     ),
+    payment_status: pickFirst(
+      body.PaymentStatus,
+      body.paymentStatus,
+      body.payment_status
+    ),
   };
 
   next();

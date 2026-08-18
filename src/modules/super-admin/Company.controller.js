@@ -859,6 +859,9 @@ const updateCompany = async (req, res, next) => {
     const companyStatus = String(req.body.status).trim().toLowerCase();
     const companyIndustry = String(req.body.industry).trim();
     const companyAddress = String(req.body.address).trim();
+    const paymentStatus = req.body.payment_status
+      ? String(req.body.payment_status).trim().toLowerCase()
+      : null;
 
     const existing = await pool.query(
       'SELECT id FROM companies WHERE id = $1 LIMIT 1',
@@ -897,9 +900,10 @@ const updateCompany = async (req, res, next) => {
          status = $2,
          industry = $3,
          address = $4,
+         payment_status = COALESCE($5, payment_status),
          updated_at = NOW()
-       WHERE id = $5`,
-      [companyName, companyStatus, companyIndustry, companyAddress, parsedId]
+       WHERE id = $6`,
+      [companyName, companyStatus, companyIndustry, companyAddress, paymentStatus, parsedId]
     );
 
     const { rows } = await pool.query(COMPANY_DETAIL_SELECT, [parsedId]);

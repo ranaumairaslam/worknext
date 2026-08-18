@@ -259,8 +259,15 @@ const ALLOWED_COMPANY_STATUSES = [
   'suspended',
 ];
 
+const ALLOWED_PAYMENT_STATUSES = [
+  'paid',
+  'pending',
+  'failed',
+  'cancelled',
+];
+
 const validateUpdateCompany = (req, res, next) => {
-  const { name, status, industry, address } = req.body;
+  const { name, status, industry, address, payment_status } = req.body;
   const errors = {};
   const fieldErrors = {};
 
@@ -287,6 +294,14 @@ const validateUpdateCompany = (req, res, next) => {
   if (!address || !String(address).trim()) {
     errors.address = 'Address is required';
     fieldErrors.address = 'Address is required';
+  }
+
+  if (
+    payment_status &&
+    !ALLOWED_PAYMENT_STATUSES.includes(String(payment_status).toLowerCase())
+  ) {
+    errors.payment_status = `Payment status must be one of: ${ALLOWED_PAYMENT_STATUSES.join(', ')}`;
+    fieldErrors.paymentStatus = `Payment status must be one of: ${ALLOWED_PAYMENT_STATUSES.join(', ')}`;
   }
 
   if (Object.keys(errors).length > 0) {
