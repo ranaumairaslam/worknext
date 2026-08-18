@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { normalizeRole } = require('./role.middleware');
 
 module.exports = function protect(req, res, next) {
   let token;
@@ -17,7 +18,8 @@ module.exports = function protect(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id: userId, iat, exp }
+    req.user = decoded;
+    req.user.role = normalizeRole(decoded.role);
     next();
   } catch (err) {
     return res.status(401).json({

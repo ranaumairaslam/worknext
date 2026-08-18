@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("../../config/db");
+const { normalizeRole } = require("../../middleware/role.middleware");
 
 const router = express.Router();
 
@@ -15,7 +16,8 @@ const positiveInteger = (value, fallback = 1, maximum = 100) => {
 const authorizeRole =
   (...roles) =>
   (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const allowed = roles.map((role) => normalizeRole(role));
+    if (!allowed.includes(normalizeRole(req.user?.role))) {
       return res
         .status(403)
         .json({

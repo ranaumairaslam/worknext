@@ -1,21 +1,10 @@
 ﻿const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
+const authorize = require("../../middleware/role.middleware");
+const { normalizeRole } = require("../../middleware/role.middleware");
 
 const router = express.Router({ mergeParams: true });
-
-const authorizeRole =
-  (...roles) =>
-  (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        code: 403,
-        message: "You do not have access to this resource",
-      });
-    }
-    next();
-  };
 
 const methodNotAllowed = (allowed) => (req, res) => {
   res.set("Allow", allowed.join(", "));
@@ -145,7 +134,7 @@ async function createTeamHandler(req, res, next) {
 
     const team = rows[0];
 
-    if (leader && leader.role !== "company" && leader.role !== "super_admin") {
+    if (leader && normalizeRole(leader.role) !== "company" && normalizeRole(leader.role) !== "super_admin") {
       await db.query(
         `UPDATE users
          SET role = 'team_leader', team_id = $1
@@ -183,7 +172,7 @@ async function createTeamHandler(req, res, next) {
   }
 }
 
-router.post("/", authorizeRole("company", "super_admin"), createTeamHandler);
+router.post("/", authorize("company", "companyAdmin", "super_admin"), createTeamHandler);
 
 // =======================================================
 // GET /api/company/teams
@@ -200,7 +189,7 @@ router.get("/", async (req, res, next) => {
         return sendError(res, 400, "Invalid companyId");
       }
 
-      if (req.user.role === "company" && requestedId !== Number(req.company.id)) {
+      if (normalizeRole(req.user.role) === "company" && requestedId !== Number(req.company.id)) {
         return sendError(
           res,
           403,
@@ -258,7 +247,7 @@ router.all("/", methodNotAllowed(["GET", "POST"]));
 // Explicit createTeam path (POST only)
 router.post(
   "/create",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   createTeamHandler,
 );
 router.all("/create", methodNotAllowed(["POST"]));
@@ -404,7 +393,7 @@ async function registerMemberHandler(req, res, next) {
 // Body style: { TeamId, EmployeeName }
 router.post(
   "/register-member",
-  authorizeRole("company", "super_admin", "team_leader"),
+  authorize("company", "super_admin", "team_leader"),
   registerMemberHandler,
 );
 router.all("/register-member", methodNotAllowed(["POST"]));
@@ -412,7 +401,7 @@ router.all("/register-member", methodNotAllowed(["POST"]));
 // Path style: /api/company/teams/15/register-member
 router.post(
   "/:teamId/register-member",
-  authorizeRole("company", "super_admin", "team_leader"),
+  authorize("company", "super_admin", "team_leader"),
   registerMemberHandler,
 );
 router.all("/:teamId/register-member", methodNotAllowed(["POST"]));
@@ -587,17 +576,17 @@ const TEAM_ITEM_METHODS = ["GET", "PUT", "PATCH", "DELETE"];
 router.get("/teamId/:teamId", getTeamHandler);
 router.put(
   "/teamId/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   updateTeamHandler,
 );
 router.patch(
   "/teamId/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   updateTeamHandler,
 );
 router.delete(
   "/teamId/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   deleteTeamHandler,
 );
 router.all("/teamId/:teamId", methodNotAllowed(TEAM_ITEM_METHODS));
@@ -606,24 +595,24 @@ router.all("/teamId/:teamId", methodNotAllowed(TEAM_ITEM_METHODS));
 router.get("/:teamId", getTeamHandler);
 router.put(
   "/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   updateTeamHandler,
 );
 router.patch(
   "/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   updateTeamHandler,
 );
 router.delete(
   "/:teamId",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   deleteTeamHandler,
 );
 
 // PUT /api/company/teams/:teamId/assign-leader
 router.put(
   "/:teamId/assign-leader",
-  authorizeRole("company", "super_admin"),
+  authorize("company", "super_admin"),
   async (req, res, next) => {
     const client = await pool.connect();
 
@@ -707,3 +696,4 @@ router.all(
 router.all("/:teamId", methodNotAllowed(TEAM_ITEM_METHODS));
 
 module.exports = router;
+module.exports.createTeamHandler = createTeamHandler;

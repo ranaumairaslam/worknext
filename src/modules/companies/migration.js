@@ -60,6 +60,11 @@ async function migrate() {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_public_id TEXT;
     `);
+    await pool.query(`
+      UPDATE users
+      SET role = 'company'
+      WHERE LOWER(role) IN ('companyadmin', 'company_admin')
+    `);
 
     // Password reset OTPs (email or phone)
     console.log('Ensuring password_reset_otps table exists...');
