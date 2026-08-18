@@ -1,10 +1,31 @@
+const path = require('path');
 const multer = require('multer');
+
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.svg',
+]);
+
+function isImageFile(file) {
+  const mime = String(file?.mimetype || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+
+  const ext = path.extname(file?.originalname || '').toLowerCase();
+  if (IMAGE_EXTENSIONS.has(ext)) return true;
+
+  return false;
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter(req, file, cb) {
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+    if (!isImageFile(file)) {
       return cb(new Error('Payment receipt must be an image file'));
     }
     cb(null, true);
@@ -29,6 +50,32 @@ function pickFirst(...values) {
     }
   }
   return undefined;
+}
+
+function normalizeUpdateCompanyFields(req, res, next) {
+  const body = req.body || {};
+
+  req.body = {
+    name: pickFirst(
+      body.CompanyName,
+      body.companyName,
+      body.name
+    ),
+    status: pickFirst(
+      body.CompanyStatus,
+      body.companyStatus,
+      body.status
+    ),
+    industry: pickFirst(body.Industry, body.industry),
+    address: pickFirst(
+      body.Address,
+      body.address,
+      body.Location,
+      body.location
+    ),
+  };
+
+  next();
 }
 
 function normalizeCreateCompanyFields(req, res, next) {
@@ -101,13 +148,8 @@ function handleCreateCompanyUpload(req, res, next) {
 
     const files = Array.isArray(req.files) ? req.files : [];
     const receiptFile =
-      files.find(
-        (file) =>
-          isReceiptField(file.fieldname) &&
-          file.mimetype &&
-          file.mimetype.startsWith('image/')
-      ) ||
-      files.find((file) => file.mimetype && file.mimetype.startsWith('image/')) ||
+      files.find((file) => isReceiptField(file.fieldname) && isImageFile(file)) ||
+      files.find((file) => isImageFile(file)) ||
       null;
 
     req.file = receiptFile || null;
@@ -118,4 +160,5 @@ function handleCreateCompanyUpload(req, res, next) {
 module.exports = {
   handleCreateCompanyUpload,
   normalizeCreateCompanyFields,
+  normalizeUpdateCompanyFields,
 };

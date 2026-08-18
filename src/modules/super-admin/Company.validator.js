@@ -243,7 +243,68 @@ const validateCompanyQuery = (req, res, next) => {
 };
 
 
+/*
+|--------------------------------------------------------------------------
+| Validate Update Company
+|--------------------------------------------------------------------------
+| PUT /api/super-admin/companies/:companyId
+| Fields: companyName, status, industry, address
+|--------------------------------------------------------------------------
+*/
+
+const ALLOWED_COMPANY_STATUSES = [
+  'active',
+  'inactive',
+  'pending',
+  'suspended',
+];
+
+const validateUpdateCompany = (req, res, next) => {
+  const { name, status, industry, address } = req.body;
+  const errors = {};
+  const fieldErrors = {};
+
+  if (!name || !String(name).trim()) {
+    errors.name = 'Company name is required';
+    fieldErrors.companyName = 'Company name is required';
+  }
+
+  if (!status || !String(status).trim()) {
+    errors.status = 'Status is required';
+    fieldErrors.status = 'Status is required';
+  } else if (
+    !ALLOWED_COMPANY_STATUSES.includes(String(status).toLowerCase())
+  ) {
+    errors.status = `Status must be one of: ${ALLOWED_COMPANY_STATUSES.join(', ')}`;
+    fieldErrors.status = `Status must be one of: ${ALLOWED_COMPANY_STATUSES.join(', ')}`;
+  }
+
+  if (!industry || !String(industry).trim()) {
+    errors.industry = 'Industry is required';
+    fieldErrors.industry = 'Industry is required';
+  }
+
+  if (!address || !String(address).trim()) {
+    errors.address = 'Address is required';
+    fieldErrors.address = 'Address is required';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return res.status(400).json({
+      success: false,
+      code: 400,
+      message: 'Validation failed',
+      errors,
+      fieldErrors,
+    });
+  }
+
+  next();
+};
+
+
 module.exports = {
   validateCreateCompany,
   validateCompanyQuery,
+  validateUpdateCompany,
 };

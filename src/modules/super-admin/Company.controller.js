@@ -800,6 +800,211 @@ const getCompanyById = async (
 
 /*
 |--------------------------------------------------------------------------
+| UPDATE COMPANY
+|--------------------------------------------------------------------------
+| PUT /api/super-admin/companies/:companyId
+| Body: { companyName, status, industry, address }
+|--------------------------------------------------------------------------
+*/
+
+const COMPANY_DETAIL_SELECT = `
+  SELECT
+    c.id,
+    c.name,
+    c.email,
+    c.industry,
+    c.phone,
+    c.address,
+    c.company_size,
+    c.website,
+    c.status,
+    c.platform_fee,
+    c.payment_status,
+    c.payment_receipt,
+    c.payment_receipt_public_id,
+    c.created_at,
+    c.updated_at,
+    u.id AS admin_user_id,
+    u.name AS admin_name,
+    u.email AS login_email,
+    u.role AS admin_role,
+    u.status AS admin_status
+  FROM companies c
+  LEFT JOIN LATERAL (
+    SELECT id, name, email, role, status
+    FROM users
+    WHERE company_id = c.id
+      AND LOWER(role) IN ('companyadmin', 'company_admin')
+    ORDER BY id ASC
+    LIMIT 1
+  ) u ON true
+  WHERE c.id = $1
+  LIMIT 1
+`;
+
+const updateCompany = async (req, res, next) => {
+  try {
+    const { companyId } = req.params;
+    const parsedId = Number(companyId);
+
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid company id',
+      });
+    }
+
+    const companyName = String(req.body.name).trim();
+    const companyStatus = String(req.body.status).trim().toLowerCase();
+    const companyIndustry = String(req.body.industry).trim();
+    const companyAddress = String(req.body.address).trim();
+
+    const existing = await pool.query(
+      'SELECT id FROM companies WHERE id = $1 LIMIT 1',
+      [parsedId]
+    );
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const duplicate = await pool.query(
+      `SELECT id
+       FROM companies
+       WHERE LOWER(name) = LOWER($1)
+         AND id <> $2
+       LIMIT 1`,
+      [companyName, parsedId]
+    );
+
+    if (duplicate.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 409,
+        message: 'A company with this name already exists',
+      });
+    }
+
+    await pool.query(
+      `UPDATE companies
+       SET
+         name = $1,
+         status = $2,
+         industry = $3,
+         address = $4,
+         updated_at = NOW()
+       WHERE id = $5`,
+      [companyName, companyStatus, companyIndustry, companyAddress, parsedId]
+    );
+
+    const { rows } = await pool.query(COMPANY_DETAIL_SELECT, [parsedId]);
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Company updated successfully',
+      company: rows[0],
+    });
+  } catch (error) {
+    console.error('❌ updateCompany error:', error);
+    next(error);
+  }
+};
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE COMPANY
+|--------------------------------------------------------------------------
+| DELETE /api/super-admin/companies/:companyId
+|--------------------------------------------------------------------------
+*/
+
+const deleteCompany = async (req, res, next) => {
+  let dbClient;
+
+  try {
+    const { companyId } = req.params;
+    const parsedId = Number(companyId);
+
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 400,
+        message: 'Invalid company id',
+      });
+    }
+
+    dbClient = await pool.connect();
+    await dbClient.query('BEGIN');
+
+    const existing = await dbClient.query(
+      `SELECT id, name, payment_receipt_public_id
+       FROM companies
+       WHERE id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedId]
+    );
+
+    if (existing.rows.length === 0) {
+      await dbClient.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: 'Company not found',
+      });
+    }
+
+    const company = existing.rows[0];
+
+    await dbClient.query('DELETE FROM companies WHERE id = $1', [parsedId]);
+    await dbClient.query('COMMIT');
+
+    if (company.payment_receipt_public_id) {
+      try {
+        await destroyCloudinaryImage(company.payment_receipt_public_id);
+      } catch (cloudinaryError) {
+        console.error(
+          '⚠️ Failed to delete company payment receipt from Cloudinary:',
+          cloudinaryError.message
+        );
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      code: 200,
+      message: 'Company deleted successfully',
+      data: {
+        id: company.id,
+        name: company.name,
+      },
+    });
+  } catch (error) {
+    if (dbClient) {
+      try {
+        await dbClient.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('❌ deleteCompany rollback error:', rollbackError);
+      }
+    }
+
+    console.error('❌ deleteCompany error:', error);
+    next(error);
+  } finally {
+    if (dbClient) dbClient.release();
+  }
+};
+
+
+/*
+|--------------------------------------------------------------------------
 | GET SUPER ADMIN DASHBOARD
 |--------------------------------------------------------------------------
 | GET /api/super-admin/dashboard
@@ -1627,6 +1832,10 @@ module.exports = {
   getAllCompanies,
 
   getCompanyById,
+
+  updateCompany,
+
+  deleteCompany,
 
   getDashboard,
 
