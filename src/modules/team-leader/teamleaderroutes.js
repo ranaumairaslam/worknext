@@ -13,6 +13,8 @@ const {
   editTaskByNames,
   deleteTaskByNames,
   createTask,
+  updateTask,
+  deleteTask,
   assignTask,
   updateTaskPriority,
   viewTasks,
@@ -114,6 +116,12 @@ router
   .route('/tasks/:taskId/revision')
   .put(returnTaskForRevision)
   .all(methodNotAllowed(['PUT']));
+
+router
+  .route('/tasks/:taskId')
+  .put(updateTask)
+  .delete(deleteTask)
+  .all(methodNotAllowed(['PUT', 'DELETE']));
 
 router
   .route('/progress')

@@ -1,10 +1,12 @@
 ﻿const express = require("express");
 const pool = require("../../config/db");
 const protect = require("../../middleware/auth.middleware");
+const { normalizeRole } = require("../../middleware/role.middleware");
 const router = express.Router({ mergeParams: true });
 const authorizeRole = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const allowed = roles.map((role) => normalizeRole(role));
+    if (!allowed.includes(normalizeRole(req.user?.role))) {
       return res.status(403).json({
         success: false,
         code: 403,
@@ -34,6 +36,7 @@ const parseProjectId = (raw) => {
 };
 
 async function loadCompany(req, res, next) {
+  if (req.company) return next();
   try {
     const result = await pool.query(
       "SELECT company_id FROM users WHERE id=$1",

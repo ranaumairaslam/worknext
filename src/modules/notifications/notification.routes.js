@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const protect = require('../../middleware/auth.middleware');
+const { normalizeRole } = require('../../middleware/role.middleware');
 const pool = require('../../config/db');
 const {
   createNotification,
@@ -200,7 +201,7 @@ async function updateNotificationsHandler(req, res) {
  */
 async function createNotificationHandler(req, res) {
   try {
-    const role = req.currentUser.role;
+    const role = normalizeRole(req.currentUser.role);
     if (!['company', 'super_admin', 'team_leader'].includes(role)) {
       return res.status(403).json({
         success: false,

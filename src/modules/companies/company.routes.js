@@ -5,6 +5,7 @@ const express = require('express');
 const pool = require('../../config/db');
 const protect = require('../../middleware/auth.middleware');
 const authorize = require('../../middleware/role.middleware');
+const { normalizeRole } = require('../../middleware/role.middleware');
 const meetingRoutes = require('./meeting.routes');
 
 const router = express.Router();
@@ -20,26 +21,101 @@ const validateEmail = (value) => /^\S+@\S+\.\S+$/.test(String(value || '').trim(
 // has a valid JWT token.
 // =======================================================
 
-// Middleware: Load the logged-in admin's company into req.company
+// Middleware: Load the logged-in user's company into req.company
 async function loadCompany(req, res, next) {
   try {
-    const userResult = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user.id]);
-    const companyId = userResult.rows[0]?.company_id || req.user.companyId;
+    const tokenUserId = req.user?.id;
+    const tokenEmail = req.user?.email
+      ? String(req.user.email).trim().toLowerCase()
+      : null;
+    const tokenCompanyId = req.user?.companyId || req.user?.company_id || null;
 
-    if (!companyId) {
-      return res.status(403).json({ success: false, message: 'User does not belong to a company' });
+    let user = null;
+
+    if (tokenUserId !== undefined && tokenUserId !== null && tokenUserId !== '') {
+      const byId = await pool.query(
+        `SELECT id, email, role, company_id, status
+         FROM users
+         WHERE id = $1
+         LIMIT 1`,
+        [tokenUserId]
+      );
+      user = byId.rows[0] || null;
     }
 
-    const companyResult = await pool.query(
-      'SELECT id, name, status, email, phone, address, industry, website FROM companies WHERE id = $1',
-      [companyId]
+    if (!user && tokenEmail) {
+      const byEmail = await pool.query(
+        `SELECT id, email, role, company_id, status
+         FROM users
+         WHERE LOWER(email) = $1
+         LIMIT 1`,
+        [tokenEmail]
+      );
+      user = byEmail.rows[0] || null;
+    }
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not found for this token. Please log in again.',
+      });
+    }
+
+    const userRole = normalizeRole(user.role);
+
+    const candidateIds = [user.company_id, tokenCompanyId].filter(
+      (id) => id !== undefined && id !== null && id !== ''
     );
 
-    if (!companyResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Company not found' });
+    let company = null;
+
+    for (const id of candidateIds) {
+      const result = await pool.query(
+        `SELECT * FROM companies WHERE id = $1 LIMIT 1`,
+        [id]
+      );
+      if (result.rows[0]) {
+        company = result.rows[0];
+        break;
+      }
     }
 
-    req.company = companyResult.rows[0];
+    if (!company && user.email) {
+      const result = await pool.query(
+        `SELECT * FROM companies WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+        [user.email]
+      );
+      company = result.rows[0] || null;
+    }
+
+    if (!company && user.id) {
+      const result = await pool.query(
+        `SELECT * FROM companies WHERE owner_id = $1 LIMIT 1`,
+        [user.id]
+      );
+      company = result.rows[0] || null;
+    }
+
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message:
+          'No company is linked to this account. The company may have been deleted. Login with a company that still exists.',
+      });
+    }
+
+    if (Number(user.company_id) !== Number(company.id)) {
+      await pool.query('UPDATE users SET company_id = $1 WHERE id = $2', [
+        company.id,
+        user.id,
+      ]);
+    }
+
+    req.company = company;
+    req.user.id = user.id;
+    req.user.email = user.email;
+    req.user.role = userRole;
+    req.user.companyId = company.id;
     next();
   } catch (error) {
     next(error);
@@ -47,7 +123,10 @@ async function loadCompany(req, res, next) {
 }
 
 const authorizeRole = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role)) {
+  const allowed = roles.map((role) => normalizeRole(role));
+  const userRole = normalizeRole(req.user?.role);
+
+  if (!userRole || !allowed.includes(userRole)) {
     return res.status(403).json({ success: false, message: 'You do not have access to this resource' });
   }
   next();
@@ -223,10 +302,16 @@ router.post('/scheduledMeetings/cancel', canManageMeetings, meetingRoutes.cancel
 router.patch('/meetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
 router.patch('/scheduled-meetings/cancel/:meetingId', canManageMeetings, meetingRoutes.cancelMeetingHandler);
 
-router.use('/teams', require('./team.routes'));
+const teamRoutes = require('./team.routes');
+router.post('/team', authorize('company', 'super_admin'), teamRoutes.createTeamHandler);
+router.post('/teams', authorize('company', 'super_admin'), teamRoutes.createTeamHandler);
+router.use('/teams', teamRoutes);
+router.use('/team', teamRoutes);
 router.use('/projects', require('./project.routes'));
+router.use('/projects', require('./project.progress.routes'));
 router.use('/employees', require('../employees/employee.routes'));
 router.use('/clients', require('./client.routes'));
+router.use('/client', require('./client.routes'));
 router.use('/tasks', require('../tasks/task.routes'));
 router.use('/meetings', meetingRoutes);
 router.use('/scheduledMeetings', meetingRoutes);

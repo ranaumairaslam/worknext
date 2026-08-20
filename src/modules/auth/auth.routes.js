@@ -9,6 +9,7 @@ const {
   mapOtpError,
   isMailConfigured,
 } = require('./password-reset.service');
+const { normalizeRole } = require('../../middleware/role.middleware');
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ function phonesMatch(a, b) {
 }
 
 function getDashboardUrl(role) {
-  switch (role) {
+  switch (normalizeRole(role)) {
     case 'super_admin':
       return '/api/super-admin/dashboard';
     case 'company':
@@ -139,6 +140,31 @@ async function loginHandler(req, res) {
       });
     }
 
+    if (user.company_id) {
+      const companyResult = await pool.query(
+        'SELECT id, status FROM companies WHERE id = $1 LIMIT 1',
+        [user.company_id]
+      );
+      const company = companyResult.rows[0];
+      if (company) {
+        const companyStatus = String(company.status || '')
+          .trim()
+          .toLowerCase();
+        if (
+          companyStatus === 'inactive' ||
+          companyStatus === 'suspended' ||
+          companyStatus === 'suspend'
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 403,
+            message:
+              'This company account is suspended or inactive. Login is disabled. Please contact support.',
+          });
+        }
+      }
+    }
+
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
       return res.status(401).json({
@@ -149,7 +175,12 @@ async function loginHandler(req, res) {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      {
+        id: user.id,
+        email: user.email,
+        role: normalizeRole(user.role),
+        companyId: user.company_id || null,
+      },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
     );
@@ -168,7 +199,8 @@ async function loginHandler(req, res) {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        role: normalizeRole(user.role),
+        companyId: user.company_id || null,
         avatarUrl: user.avatar_url || null,
         dashboard: getDashboardUrl(user.role),
       },

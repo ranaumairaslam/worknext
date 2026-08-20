@@ -383,10 +383,17 @@ const createCompany = async (req, res, next) => {
         ownerName,
         loginEmail,
         hashedPassword,
-        'companyAdmin',
+        'company',
         company.id,
         'active',
       ]
+    );
+
+    await dbClient.query(
+      `UPDATE companies
+       SET owner_id = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [userRows[0].id, company.id]
     );
 
 
@@ -521,6 +528,7 @@ const getAllCompanies = async (
         WHERE company_id = c.id
 
           AND LOWER(role) IN (
+            'company',
             'companyadmin',
             'company_admin'
           )
@@ -740,6 +748,7 @@ const getCompanyById = async (
         WHERE company_id = c.id
 
           AND LOWER(role) IN (
+            'company',
             'companyadmin',
             'company_admin'
           )
@@ -834,7 +843,7 @@ const COMPANY_DETAIL_SELECT = `
     SELECT id, name, email, role, status
     FROM users
     WHERE company_id = c.id
-      AND LOWER(role) IN ('companyadmin', 'company_admin')
+      AND LOWER(role) IN ('company', 'companyadmin', 'company_admin')
     ORDER BY id ASC
     LIMIT 1
   ) u ON true
@@ -856,9 +865,13 @@ const updateCompany = async (req, res, next) => {
     }
 
     const companyName = String(req.body.name).trim();
-    const companyStatus = String(req.body.status).trim().toLowerCase();
+    let companyStatus = String(req.body.status).trim().toLowerCase();
+    if (companyStatus === 'suspend') companyStatus = 'suspended';
     const companyIndustry = String(req.body.industry).trim();
     const companyAddress = String(req.body.address).trim();
+    const paymentStatus = req.body.payment_status
+      ? String(req.body.payment_status).trim().toLowerCase()
+      : null;
 
     const existing = await pool.query(
       'SELECT id FROM companies WHERE id = $1 LIMIT 1',
@@ -897,10 +910,21 @@ const updateCompany = async (req, res, next) => {
          status = $2,
          industry = $3,
          address = $4,
+         payment_status = COALESCE($5, payment_status),
          updated_at = NOW()
-       WHERE id = $5`,
-      [companyName, companyStatus, companyIndustry, companyAddress, parsedId]
+       WHERE id = $6`,
+      [companyName, companyStatus, companyIndustry, companyAddress, paymentStatus, parsedId]
     );
+
+    // Disable active sessions when company is suspended/inactive
+    if (companyStatus === 'inactive' || companyStatus === 'suspended') {
+      await pool.query(
+        `UPDATE users
+         SET token = NULL, updated_at = NOW()
+         WHERE company_id = $1`,
+        [parsedId]
+      );
+    }
 
     const { rows } = await pool.query(COMPANY_DETAIL_SELECT, [parsedId]);
 

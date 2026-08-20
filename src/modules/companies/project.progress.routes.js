@@ -1,14 +1,40 @@
 const express = require('express');
+const protect = require('../../middleware/auth.middleware');
 const pool = require('../../config/db');
+const { normalizeRole } = require('../../middleware/role.middleware');
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 
 const authorizeRole = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role)) {
+  const allowed = roles.map((role) => normalizeRole(role));
+  if (!allowed.includes(normalizeRole(req.user?.role))) {
     return res.status(403).json({ success: false, message: 'You do not have access to this resource' });
   }
   next();
 };
+
+async function loadCompany(req, res, next) {
+  if (req.company) return next();
+  try {
+    const result = await pool.query(
+      'SELECT company_id FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const companyId = result.rows[0]?.company_id || req.user.companyId;
+    if (!companyId) {
+      return res.status(403).json({
+        success: false,
+        message: 'User does not belong to a company',
+      });
+    }
+    req.company = { id: companyId };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.use(protect, loadCompany);
 
 // Small helper: verify the project belongs to the admin's company before touching it
 async function getCompanyProject(projectId, companyId) {
