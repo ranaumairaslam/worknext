@@ -257,6 +257,7 @@ const ALLOWED_COMPANY_STATUSES = [
   'inactive',
   'pending',
   'suspended',
+  'suspend',
 ];
 
 const ALLOWED_PAYMENT_STATUSES = [
@@ -265,6 +266,12 @@ const ALLOWED_PAYMENT_STATUSES = [
   'failed',
   'cancelled',
 ];
+
+function normalizeCompanyStatus(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'suspend') return 'suspended';
+  return value;
+}
 
 const validateUpdateCompany = (req, res, next) => {
   const { name, status, industry, address, payment_status } = req.body;
@@ -282,8 +289,10 @@ const validateUpdateCompany = (req, res, next) => {
   } else if (
     !ALLOWED_COMPANY_STATUSES.includes(String(status).toLowerCase())
   ) {
-    errors.status = `Status must be one of: ${ALLOWED_COMPANY_STATUSES.join(', ')}`;
-    fieldErrors.status = `Status must be one of: ${ALLOWED_COMPANY_STATUSES.join(', ')}`;
+    errors.status = `Status must be one of: active, inactive, pending, suspended (or suspend)`;
+    fieldErrors.status = `Status must be one of: active, inactive, pending, suspended (or suspend)`;
+  } else {
+    req.body.status = normalizeCompanyStatus(status);
   }
 
   if (!industry || !String(industry).trim()) {

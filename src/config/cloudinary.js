@@ -37,13 +37,20 @@ function uploadBufferToCloudinary(buffer, options = {}) {
     return Promise.reject(err);
   }
 
+  const {
+    folder = 'worknest/avatars',
+    resource_type = 'image',
+    overwrite = true,
+    ...rest
+  } = options;
+
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
-        folder: options.folder || 'worknest/avatars',
-        resource_type: 'image',
-        overwrite: true,
-        ...options,
+        folder,
+        resource_type,
+        overwrite,
+        ...rest,
       },
       (error, result) => {
         if (error) return reject(error);

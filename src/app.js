@@ -1,5 +1,6 @@
 ﻿require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
@@ -30,6 +31,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // =======================
 // Routing

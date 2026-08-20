@@ -90,8 +90,10 @@ PUT /api/super-admin/companies/:id
   "address": "Lahore, Pakistan",
   "PaymentStatus": "paid"
 }
-status: active | inactive | pending | suspended
+status: active | inactive | pending | suspended (suspend also accepted)
 PaymentStatus: paid | pending | failed | cancelled
+Note: if status is inactive / suspended / suspend, company users cannot login.
+When status is active, company credentials work again.
 
 DELETE /api/super-admin/companies/:id
 
@@ -185,7 +187,11 @@ POST /api/company/projects/:projectId/tasks
 
 GET /api/company/projects/:id/progress
 POST /api/company/projects/:id/progress
-{ "progress": 40, "note": "Design done" }
+{
+  "title": "Design complete",
+  "description": "Homepage mockups done",
+  "percentage": 40
+}
 
 ----- Tasks -----
 GET /api/company/tasks
@@ -287,7 +293,21 @@ DELETE /api/team-leader/tasks/assign
 
 GET /api/team-leader/tasks
 POST /api/team-leader/tasks
-{ "title": "Audit site", "description": "Technical SEO", "priority": "high" }
+{
+  "TaskName": "Keyword research",
+  "AssigneeName": "Sara Ahmed",
+  "Priority": "high",
+  "DueDate": "2026-08-25"
+}
+PUT /api/team-leader/tasks/:taskId
+{
+  "TaskName": "Updated task name",
+  "AssigneeName": "Sara Ahmed",
+  "Priority": "medium",
+  "DueDate": "2026-09-01"
+}
+(At least one field required: TaskName, AssigneeName, Priority, DueDate)
+DELETE /api/team-leader/tasks/:taskId
 
 PUT /api/team-leader/tasks/:taskId/assign
 { "assignedTo": 51 }
@@ -307,6 +327,12 @@ TEAM MEMBER  (role: team_member)
 ================================================================
 
 GET /api/team-member/dashboard
+POST /api/team-member/submit
+Content-Type: multipart/form-data
+file: <image | pdf | office file>
+description: "Completed the weekly report"
+(Allowed files: jpg, png, gif, webp, pdf, doc, docx, xls, xlsx, ppt, pptx — max 15MB)
+
 GET /api/team-member/tasks/assigned
 GET /api/team-member/tasks/:taskId
 POST /api/team-member/tasks/:taskId/start

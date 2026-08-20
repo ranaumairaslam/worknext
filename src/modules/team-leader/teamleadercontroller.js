@@ -199,13 +199,53 @@ const mapAssignTaskResponse = (task, team, member, project) => ({
   TaskDescription: task.description,
   TeamName: team?.name || null,
   TeamMemberName: member?.name || task.assignee_name || null,
+  AssigneeName: member?.name || task.assignee_name || null,
   Priority: task.priority,
+  DueDate: task.due_date,
   Date: task.due_date,
   taskId: task.id,
   projectId: project?.id || task.project_id || null,
   projectName: project?.name || null,
   status: task.status,
 });
+
+const parseTaskCrudFields = (body, { requireAll = false } = {}) => {
+  const errors = {};
+  const fields = {
+    taskName: pickValue(body.TaskName, body.taskName, body.title),
+    assigneeName: pickValue(
+      body.AssigneeName,
+      body.assigneeName,
+      body.TeamMemberName,
+      body.teamMemberName,
+      body.memberName
+    ),
+    priorityRaw: pickValue(body.Priority, body.Prority, body.priority),
+    dateRaw: pickValue(body.DueDate, body.dueDate, body.Date, body.date),
+  };
+
+  if (requireAll) {
+    if (!fields.taskName) errors.TaskName = 'TaskName is required';
+    if (!fields.assigneeName) errors.AssigneeName = 'AssigneeName is required';
+    if (!fields.priorityRaw) errors.Priority = 'Priority is required';
+    if (!fields.dateRaw) errors.DueDate = 'DueDate is required';
+  }
+
+  return { fields, errors };
+};
+
+const getDefaultTeamProject = async (teamId) => {
+  const projectResult = await pool.query(
+    `SELECT id, name
+     FROM projects
+     WHERE team_id = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [teamId]
+  );
+
+  return projectResult.rows[0] || null;
+};
 
 const getTaskForLeader = async (userId, companyId, { taskId, taskName }) => {
   const baseQuery = `
@@ -1084,7 +1124,116 @@ exports.createTask = async (req, res) => {
     if (!team) {
       return res.status(404).json({
         success: false,
-        message: "No team found",
+        message: 'No team found',
+      });
+    }
+
+    const body = req.body || {};
+    const usingCrudFields =
+      body.TaskName !== undefined ||
+      body.taskName !== undefined ||
+      body.AssigneeName !== undefined ||
+      body.assigneeName !== undefined ||
+      body.TeamMemberName !== undefined ||
+      body.DueDate !== undefined ||
+      body.Prority !== undefined;
+
+    if (usingCrudFields) {
+      const { fields, errors } = parseTaskCrudFields(body, { requireAll: true });
+
+      if (Object.keys(errors).length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors,
+        });
+      }
+
+      const normalizedPriority = normalizePriority(fields.priorityRaw);
+      if (!['high', 'medium', 'low'].includes(normalizedPriority)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: {
+            Priority: 'Priority must be high, medium, or low',
+          },
+        });
+      }
+
+      const dateCheck = validateAssignDate(fields.dateRaw);
+      if (dateCheck.error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: {
+            DueDate: dateCheck.error,
+          },
+        });
+      }
+
+      const companyId = team.company_id || (await getUserCompanyId(req.user.id));
+      const member = await getTeamMemberByName(
+        team.id,
+        companyId,
+        fields.assigneeName
+      );
+
+      if (!member) {
+        return res.status(404).json({
+          success: false,
+          message: 'Assignee not found in your team',
+          errors: {
+            AssigneeName: `"${fields.assigneeName}" is not a member of your team`,
+          },
+        });
+      }
+
+      const project = await getDefaultTeamProject(team.id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'No project found for your team',
+        });
+      }
+
+      const { rows } = await pool.query(
+        `INSERT INTO tasks (
+          title,
+          description,
+          project_id,
+          company_id,
+          assignee_id,
+          status,
+          priority,
+          due_date
+        )
+        VALUES ($1, $2, $3, $4, $5, 'todo', $6, $7)
+        RETURNING
+          id,
+          title,
+          description,
+          project_id,
+          company_id,
+          assignee_id,
+          status,
+          priority,
+          due_date,
+          created_at`,
+        [
+          fields.taskName,
+          null,
+          project.id,
+          companyId,
+          member.id,
+          normalizedPriority,
+          dateCheck.dueDateValue,
+        ]
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: 'Task created successfully',
+        data: mapAssignTaskResponse(rows[0], team, member, project),
       });
     }
 
@@ -1094,14 +1243,14 @@ exports.createTask = async (req, res) => {
       projectId,
       assigneeId,
       dueDate,
-      priority = "medium",
-    } = req.body;
+      priority = 'medium',
+    } = body;
 
     // Task Name
     if (!title || !String(title).trim()) {
       return res.status(400).json({
         success: false,
-        message: "Task name is required",
+        message: 'Task name is required',
       });
     }
 
@@ -1109,7 +1258,7 @@ exports.createTask = async (req, res) => {
     if (!projectId) {
       return res.status(400).json({
         success: false,
-        message: "Project is required",
+        message: 'Project is required',
       });
     }
 
@@ -1128,7 +1277,7 @@ exports.createTask = async (req, res) => {
     if (!project.rowCount) {
       return res.status(404).json({
         success: false,
-        message: "Project not found in your team",
+        message: 'Project not found in your team',
       });
     }
 
@@ -1158,7 +1307,7 @@ exports.createTask = async (req, res) => {
       if (!assignee.rowCount) {
         return res.status(404).json({
           success: false,
-          message: "Team member not found in your team",
+          message: 'Team member not found in your team',
         });
       }
 
@@ -1168,10 +1317,10 @@ exports.createTask = async (req, res) => {
     // Validate priority
     const normalizedPriority = String(priority).toLowerCase();
 
-    if (!["high", "medium", "low"].includes(normalizedPriority)) {
+    if (!['high', 'medium', 'low'].includes(normalizedPriority)) {
       return res.status(400).json({
         success: false,
-        message: "Priority must be high, medium, or low",
+        message: 'Priority must be high, medium, or low',
       });
     }
 
@@ -1214,16 +1363,251 @@ exports.createTask = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Task created successfully",
+      message: 'Task created successfully',
       data: rows[0],
     });
   } catch (err) {
-    console.error("Create Task Error:", err);
+    console.error('Create Task Error:', err);
 
     return res.status(500).json({
       success: false,
       message: err.message,
     });
+  }
+};
+
+exports.updateTask = async (req, res) => {
+  try {
+    const team = await getLeaderTeam(req.user.id);
+    if (!team) {
+      return res.status(404).json({ success: false, message: 'No team found' });
+    }
+
+    const taskId = positiveInteger(req.params.taskId, 0);
+    if (!taskId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid task id',
+      });
+    }
+
+    const body = req.body || {};
+    const { fields, errors } = parseTaskCrudFields(body);
+
+    const hasUpdate =
+      body.TaskName !== undefined ||
+      body.taskName !== undefined ||
+      body.AssigneeName !== undefined ||
+      body.assigneeName !== undefined ||
+      body.TeamMemberName !== undefined ||
+      body.Priority !== undefined ||
+      body.Prority !== undefined ||
+      body.priority !== undefined ||
+      body.DueDate !== undefined ||
+      body.dueDate !== undefined ||
+      body.Date !== undefined ||
+      body.date !== undefined;
+
+    if (!hasUpdate) {
+      errors.body =
+        'Provide at least one field to update: TaskName, AssigneeName, Priority, or DueDate';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors,
+      });
+    }
+
+    const companyId = team.company_id || (await getUserCompanyId(req.user.id));
+    const lookup = await getTaskForLeader(req.user.id, companyId, { taskId });
+
+    if (!lookup.task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found in your team',
+      });
+    }
+
+    const existingTask = lookup.task;
+    let member = existingTask.assignee_id
+      ? {
+          id: existingTask.assignee_id,
+          name: existingTask.assignee_name,
+        }
+      : null;
+
+    if (body.AssigneeName !== undefined || body.assigneeName !== undefined || body.TeamMemberName !== undefined) {
+      const resolvedMember = await getTeamMemberByName(
+        team.id,
+        companyId,
+        fields.assigneeName
+      );
+
+      if (!resolvedMember) {
+        return res.status(404).json({
+          success: false,
+          message: 'Assignee not found in your team',
+          errors: {
+            AssigneeName: `"${fields.assigneeName}" is not a member of your team`,
+          },
+        });
+      }
+
+      member = resolvedMember;
+    }
+
+    let normalizedPriority = existingTask.priority;
+    if (
+      body.Priority !== undefined ||
+      body.Prority !== undefined ||
+      body.priority !== undefined
+    ) {
+      normalizedPriority = normalizePriority(fields.priorityRaw);
+      if (!['high', 'medium', 'low'].includes(normalizedPriority)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: {
+            Priority: 'Priority must be high, medium, or low',
+          },
+        });
+      }
+    }
+
+    let dueDateValue = existingTask.due_date;
+    if (
+      body.DueDate !== undefined ||
+      body.dueDate !== undefined ||
+      body.Date !== undefined ||
+      body.date !== undefined
+    ) {
+      const dateCheck = validateAssignDate(fields.dateRaw);
+      if (dateCheck.error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: {
+            DueDate: dateCheck.error,
+          },
+        });
+      }
+      dueDateValue = dateCheck.dueDateValue;
+    }
+
+    const updatedTitle =
+      body.TaskName !== undefined || body.taskName !== undefined
+        ? fields.taskName
+        : existingTask.title;
+
+    if (!updatedTitle) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: {
+          TaskName: 'TaskName cannot be empty',
+        },
+      });
+    }
+
+    const project = await getDefaultTeamProject(team.id);
+
+    const { rows } = await pool.query(
+      `UPDATE tasks
+       SET
+         title = $1,
+         assignee_id = $2,
+         priority = $3,
+         due_date = $4,
+         updated_at = NOW()
+       WHERE id = $5
+       RETURNING
+         id,
+         title,
+         description,
+         project_id,
+         company_id,
+         assignee_id,
+         status,
+         priority,
+         due_date,
+         created_at`,
+      [
+        updatedTitle,
+        member?.id || null,
+        normalizedPriority,
+        dueDateValue,
+        existingTask.id,
+      ]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Task updated successfully',
+      data: mapAssignTaskResponse(rows[0], team, member, project),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.deleteTask = async (req, res) => {
+  try {
+    const team = await getLeaderTeam(req.user.id);
+    if (!team) {
+      return res.status(404).json({ success: false, message: 'No team found' });
+    }
+
+    const taskId = positiveInteger(req.params.taskId, 0);
+    if (!taskId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid task id',
+      });
+    }
+
+    const companyId = team.company_id || (await getUserCompanyId(req.user.id));
+    const lookup = await getTaskForLeader(req.user.id, companyId, { taskId });
+
+    if (!lookup.task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found in your team',
+      });
+    }
+
+    const { rowCount } = await pool.query(`DELETE FROM tasks WHERE id = $1`, [
+      lookup.task.id,
+    ]);
+
+    if (!rowCount) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Task deleted successfully',
+      data: {
+        taskId: lookup.task.id,
+        TaskName: lookup.task.title,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 

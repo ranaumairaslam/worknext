@@ -865,7 +865,8 @@ const updateCompany = async (req, res, next) => {
     }
 
     const companyName = String(req.body.name).trim();
-    const companyStatus = String(req.body.status).trim().toLowerCase();
+    let companyStatus = String(req.body.status).trim().toLowerCase();
+    if (companyStatus === 'suspend') companyStatus = 'suspended';
     const companyIndustry = String(req.body.industry).trim();
     const companyAddress = String(req.body.address).trim();
     const paymentStatus = req.body.payment_status
@@ -914,6 +915,16 @@ const updateCompany = async (req, res, next) => {
        WHERE id = $6`,
       [companyName, companyStatus, companyIndustry, companyAddress, paymentStatus, parsedId]
     );
+
+    // Disable active sessions when company is suspended/inactive
+    if (companyStatus === 'inactive' || companyStatus === 'suspended') {
+      await pool.query(
+        `UPDATE users
+         SET token = NULL, updated_at = NOW()
+         WHERE company_id = $1`,
+        [parsedId]
+      );
+    }
 
     const { rows } = await pool.query(COMPANY_DETAIL_SELECT, [parsedId]);
 
