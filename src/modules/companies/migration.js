@@ -310,6 +310,30 @@ async function migrate() {
       );
     `);
 
+    // Team member file submissions (image / PDF / office)
+    console.log('Ensuring member_submissions table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS member_submissions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        description TEXT NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_url TEXT NOT NULL,
+        file_public_id TEXT,
+        file_mime_type VARCHAR(255),
+        file_size INTEGER,
+        storage VARCHAR(50) DEFAULT 'local',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_member_submissions_user ON member_submissions(user_id);`
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_member_submissions_company ON member_submissions(company_id);`
+    );
+
     // Helpful indexes for the workflow's most common lookups
     console.log('Creating indexes...');
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_teams_company ON teams(company_id);`);

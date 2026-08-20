@@ -140,6 +140,31 @@ async function loginHandler(req, res) {
       });
     }
 
+    if (user.company_id) {
+      const companyResult = await pool.query(
+        'SELECT id, status FROM companies WHERE id = $1 LIMIT 1',
+        [user.company_id]
+      );
+      const company = companyResult.rows[0];
+      if (company) {
+        const companyStatus = String(company.status || '')
+          .trim()
+          .toLowerCase();
+        if (
+          companyStatus === 'inactive' ||
+          companyStatus === 'suspended' ||
+          companyStatus === 'suspend'
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 403,
+            message:
+              'This company account is suspended or inactive. Login is disabled. Please contact support.',
+          });
+        }
+      }
+    }
+
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
       return res.status(401).json({
