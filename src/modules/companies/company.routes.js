@@ -308,6 +308,7 @@ router.post('/teams', authorize('company', 'super_admin'), teamRoutes.createTeam
 router.use('/teams', teamRoutes);
 router.use('/team', teamRoutes);
 router.use('/projects', require('./project.routes'));
+router.use('/projects', require('./project.progress.routes'));
 router.use('/employees', require('../employees/employee.routes'));
 router.use('/clients', require('./client.routes'));
 router.use('/client', require('./client.routes'));

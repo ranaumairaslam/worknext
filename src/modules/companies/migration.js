@@ -156,6 +156,19 @@ async function migrate() {
     await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS end_date DATE;`);
     await pool.query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
 
+    console.log('Ensuring progress_reports table exists...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS progress_reports (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        percentage INTEGER NOT NULL DEFAULT 0,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
     // TASKS table (used for progress monitoring in step 6)
     console.log('Ensuring tasks table exists...');
     await pool.query(`

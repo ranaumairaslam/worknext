@@ -185,7 +185,11 @@ POST /api/company/projects/:projectId/tasks
 
 GET /api/company/projects/:id/progress
 POST /api/company/projects/:id/progress
-{ "progress": 40, "note": "Design done" }
+{
+  "title": "Design complete",
+  "description": "Homepage mockups done",
+  "percentage": 40
+}
 
 ----- Tasks -----
 GET /api/company/tasks
@@ -287,7 +291,21 @@ DELETE /api/team-leader/tasks/assign
 
 GET /api/team-leader/tasks
 POST /api/team-leader/tasks
-{ "title": "Audit site", "description": "Technical SEO", "priority": "high" }
+{
+  "TaskName": "Keyword research",
+  "AssigneeName": "Sara Ahmed",
+  "Priority": "high",
+  "DueDate": "2026-08-25"
+}
+PUT /api/team-leader/tasks/:taskId
+{
+  "TaskName": "Updated task name",
+  "AssigneeName": "Sara Ahmed",
+  "Priority": "medium",
+  "DueDate": "2026-09-01"
+}
+(At least one field required: TaskName, AssigneeName, Priority, DueDate)
+DELETE /api/team-leader/tasks/:taskId
 
 PUT /api/team-leader/tasks/:taskId/assign
 { "assignedTo": 51 }

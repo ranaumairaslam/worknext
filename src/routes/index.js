@@ -14,7 +14,6 @@ const teamLeaderRoutes = require('../modules/team-leader/teamleaderroutes');
 
 const teamMemberRoutes = require('../modules/team-member/team-member.routes');
 const clientUserRoutes = require('../modules/clients/client-user.routes');
-const projectProgressRoutes = require('../modules/companies/project.progress.routes');
 const notificationRoutes = require('../modules/notifications/notification.routes');
 const profileRoutes = require('../modules/profile/profile.routes');
 
@@ -22,7 +21,6 @@ const profileRoutes = require('../modules/profile/profile.routes');
 router.use('/auth', authRoutes);
 router.use('/super-admin', superAdminRoutes);
 router.use('/company', companyRoutes);
-router.use('/company/projects', projectProgressRoutes);
 router.use('/team-leader', teamLeaderRoutes);
 
 router.use('/client', clientUserRoutes);

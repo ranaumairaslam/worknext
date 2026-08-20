@@ -36,6 +36,7 @@ const parseProjectId = (raw) => {
 };
 
 async function loadCompany(req, res, next) {
+  if (req.company) return next();
   try {
     const result = await pool.query(
       "SELECT company_id FROM users WHERE id=$1",
