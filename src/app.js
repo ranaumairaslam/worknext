@@ -7,33 +7,61 @@ const cors = require('cors');
 const app = express();
 
 // =======================
-// Middleware
+// CORS
 // =======================
 
 const allowedOrigins = [
-  process.env.CLIENT_URL || 'https://worknest-softcenterci.vercel.app',
+  'https://worknest-softcenterci.vercel.app',
 ].map(origin => origin.trim());
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allow requests without an Origin header (e.g. Postman/curl)
-      if (!origin) {
-        return callback(null, true);
-      }
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Postman / curl / server-to-server requests
+    if (!origin) {
+      return callback(null, true);
+    }
 
-      // Allow only the configured production frontend
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(null, false);
-    },
-    credentials: true,
-  })
-);
+    return callback(null, false);
+  },
+
+  credentials: true,
+
+  methods: [
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'OPTIONS',
+  ],
+
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+  ],
+
+  optionsSuccessStatus: 204,
+};
+
+// CORS middleware
+app.use(cors(corsOptions));
+
+// Explicit preflight handling
+app.options('*', cors(corsOptions));
+
+// =======================
+// Body Parser
+// =======================
 
 app.use(express.json());
+
+// =======================
+// Static Files
+// =======================
 
 app.use(
   '/uploads',
@@ -41,13 +69,15 @@ app.use(
 );
 
 // =======================
-// Routing
+// API Routes
 // =======================
 
-// Centralized API Router
 app.use('/api', require('./routes'));
 
+// =======================
 // Home Route
+// =======================
+
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -55,7 +85,10 @@ app.get('/', (req, res) => {
   });
 });
 
+// =======================
 // 404 Handler
+// =======================
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -63,8 +96,10 @@ app.use((req, res) => {
   });
 });
 
+// =======================
 // Error Handler
+// =======================
+
 app.use(require('./middleware/error.middleware'));
 
 module.exports = app;
-/* */
