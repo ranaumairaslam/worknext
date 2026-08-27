@@ -10,52 +10,50 @@ const app = express();
 // CORS
 // =======================
 
-const allowedOrigins = [
+const DEFAULT_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'https://worknest-softcenterci.vercel.app',
-].map(origin => origin.trim());
+];
+
+const allowedOrigins = [
+  ...DEFAULT_ORIGINS,
+  ...String(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+];
+
+function isAllowedOrigin(origin) {
+  const normalized = String(origin).trim().replace(/\/$/, '');
+  if (allowedOrigins.includes(normalized)) return true;
+
+  // Any Vercel deployment (production or preview URL) of the frontend
+  return /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/i.test(normalized);
+}
 
 const corsOptions = {
-  origin: (origin, callback) => {
-    // Postman / curl / server-to-server requests
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
+  origin(origin, callback) {
+    // No Origin header (Postman/curl/server-to-server) → allow.
+    // Deny with callback(null, false) — never callback(new Error()), or Express
+    // turns it into a 500 instead of a clean CORS rejection.
+    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
     return callback(null, false);
   },
-
   credentials: true,
-
-  methods: [
-    'GET',
-    'POST',
-    'PUT',
-    'PATCH',
-    'DELETE',
-    'OPTIONS',
-  ],
-
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-  ],
-
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Disposition'],
   optionsSuccessStatus: 204,
+  maxAge: 86400,
 };
 
-// CORS middleware
 app.use(cors(corsOptions));
 
-// Explicit preflight handling
-app.options('*', cors(corsOptions));
-
-// =======================
-// Body Parser
-// =======================
+// Answer preflight before any route/404 handler can swallow it
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 
