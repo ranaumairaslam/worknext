@@ -7,7 +7,7 @@ const cors = require('cors');
 const app = express();
 
 // =======================
-// Middleware
+// CORS
 // =======================
 
 const DEFAULT_ORIGINS = [
@@ -56,22 +56,48 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // =======================
-// Routing
+// Static Files
 // =======================
 
-// Centralized API Router
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'))
+);
+
+// =======================
+// API Routes
+// =======================
+
 app.use('/api', require('./routes'));
 
+// =======================
 // Home Route
-app.get('/', (req, res) => res.json({ success: true, message: 'Auth API is running' }));
+// =======================
 
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Auth API is running',
+  });
+});
+
+// =======================
 // 404 Handler
-app.use((req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
+// =======================
 
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+  });
+});
+
+// =======================
 // Error Handler
+// =======================
+
 app.use(require('./middleware/error.middleware'));
 
 module.exports = app;
