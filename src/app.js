@@ -10,20 +10,23 @@ const app = express();
 // Middleware
 // =======================
 
-const allowedOrigins = (
-  process.env.CLIENT_URL ||
-  'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
-)
-  .split(',')
-  .map(origin => origin.trim());
+const allowedOrigins = [
+  process.env.CLIENT_URL || 'https://worknest-softcenterci.vercel.app',
+].map(origin => origin.trim());
 
 app.use(
   cors({
     origin(origin, callback) {
-      // No Origin header (Postman/curl) or an allow-listed origin ΓåÆ OK.
-      // Important: deny with callback(null, false) ΓÇö never callback(new Error()),
-      // or Express turns it into a 500 for every browser request from another port.
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow requests without an Origin header (e.g. Postman/curl)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      // Allow only the configured production frontend
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
       return callback(null, false);
     },
     credentials: true,
@@ -31,7 +34,11 @@ app.use(
 );
 
 app.use(express.json());
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'))
+);
 
 // =======================
 // Routing
@@ -41,10 +48,20 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api', require('./routes'));
 
 // Home Route
-app.get('/', (req, res) => res.json({ success: true, message: 'Auth API is running' }));
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Auth API is running',
+  });
+});
 
 // 404 Handler
-app.use((req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+  });
+});
 
 // Error Handler
 app.use(require('./middleware/error.middleware'));
