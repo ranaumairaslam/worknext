@@ -10,25 +10,50 @@ const app = express();
 // Middleware
 // =======================
 
-const allowedOrigins = (
-  process.env.CLIENT_URL ||
-  'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
-)
-  .split(',')
-  .map(origin => origin.trim());
+const DEFAULT_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://worknest-softcenterci.vercel.app',
+];
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // No Origin header (Postman/curl) or an allow-listed origin ΓåÆ OK.
-      // Important: deny with callback(null, false) ΓÇö never callback(new Error()),
-      // or Express turns it into a 500 for every browser request from another port.
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(null, false);
-    },
-    credentials: true,
-  })
-);
+const allowedOrigins = [
+  ...DEFAULT_ORIGINS,
+  ...String(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+];
+
+function isAllowedOrigin(origin) {
+  const normalized = String(origin).trim().replace(/\/$/, '');
+  if (allowedOrigins.includes(normalized)) return true;
+
+  // Any Vercel deployment (production or preview URL) of the frontend
+  return /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/i.test(normalized);
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    // No Origin header (Postman/curl/server-to-server) → allow.
+    // Deny with callback(null, false) — never callback(new Error()), or Express
+    // turns it into a 500 instead of a clean CORS rejection.
+    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Disposition'],
+  optionsSuccessStatus: 204,
+  maxAge: 86400,
+};
+
+app.use(cors(corsOptions));
+
+// Answer preflight before any route/404 handler can swallow it
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
