@@ -28,6 +28,16 @@ POST /api/dev/super-admin-token
 {}
 Expected: 200 token (local testing only)
 
+POST /api/contact-us
+Content-Type: application/json
+{
+  "FullName": "Sara Ahmed",
+  "Email": "sara@example.com",
+  "Subject": "Product enquiry",
+  "Message": "I would like to know more about your services."
+}
+Sends the message by SMTP to info@softcenteric.com.
+
 POST /api/auth/login
 { "email": "act@example.com", "password": "your-password" }
 Expected: 200 { success, token, user }
