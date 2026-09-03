@@ -28,8 +28,8 @@ async function testAll() {
     // 1. Super Admin Login
     console.log('Testing Login...');
     const loginRes = await fetch(`${baseUrl}/api/auth/login`, jsonReq('POST', {
-      email: 'superadmin@example.com',
-      password: 'superadmin123'
+      email: process.env.SUPER_ADMIN_EMAIL || 'ranaumair455@gmail.com',
+      password: process.env.SUPER_ADMIN_PASSWORD || 'CHANGE_ME'
     }));
     const loginData = await loginRes.json();
     if (loginRes.status !== 200 || !loginData.success) throw new Error('Login failed');
