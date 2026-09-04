@@ -226,10 +226,16 @@ async function submitTask(req, res, next) {
     }
 
     // Update task status to 'done' (backend uses only: todo, in_progress, done, blocked)
-    await pool.query(
-      `UPDATE tasks SET status = 'done', updated_at = NOW() WHERE id = $1`,
-      [taskId]
-    );
+   await pool.query(
+  `
+  UPDATE tasks
+  SET
+    status = 'under_review',
+    updated_at = NOW()
+  WHERE id = $1
+  `,
+  [taskId]
+);
 
     return res.status(201).json({
       success: true,

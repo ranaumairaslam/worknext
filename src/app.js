@@ -12,6 +12,7 @@ const app = express();
 
 const allowedOrigins = [
   'https://worknest-softcenterci.vercel.app',
+  'http://localhost:3000',
 ].map(origin => origin.trim());
 
 const corsOptions = {
@@ -49,9 +50,6 @@ const corsOptions = {
 
 // CORS middleware
 app.use(cors(corsOptions));
-
-// Explicit preflight handling
-app.options('*', cors(corsOptions));
 
 // =======================
 // Body Parser
