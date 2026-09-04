@@ -1735,25 +1735,89 @@ exports.viewTasks = async (req, res) => {
 exports.reviewSubmittedTasks = async (req, res) => {
   try {
     const team = await getLeaderTeam(req.user.id);
+
     if (!team) {
-      return res.status(404).json({ success: false, message: "No team found" });
+      return res.status(404).json({
+        success: false,
+        message: "No team found",
+      });
     }
 
     const { rows } = await pool.query(
-      `SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date, t.assignee_id, t.created_at,
-              p.id AS project_id, p.name AS project_name, u.name AS assignee_name
-       FROM tasks t
-       JOIN projects p ON p.id = t.project_id
-       LEFT JOIN users u ON u.id = t.assignee_id
-       WHERE p.team_id = $1 AND t.status IN ('submitted', 'under_review')
-       ORDER BY t.created_at DESC`,
+      `
+      SELECT
+        t.id,
+        t.title,
+        t.description,
+        t.status,
+        t.priority,
+        t.due_date,
+        t.assignee_id,
+        t.created_at,
+
+        p.id AS project_id,
+        p.name AS project_name,
+
+        u.name AS assignee_name,
+
+        CASE
+          WHEN ms.id IS NOT NULL THEN
+            json_build_object(
+              'id', ms.id,
+              'fileName', ms.file_name,
+              'fileUrl', ms.file_url,
+              'filePath', ms.file_url,
+              'fileType', ms.file_mime_type,
+              'fileMimeType', ms.file_mime_type,
+              'fileSize', ms.file_size,
+              'description', ms.description,
+              'submittedAt', ms.created_at
+            )
+          ELSE NULL
+        END AS submission
+
+      FROM tasks t
+
+      JOIN projects p
+        ON p.id = t.project_id
+
+      LEFT JOIN users u
+        ON u.id = t.assignee_id
+
+      LEFT JOIN LATERAL (
+        SELECT
+          ms.id,
+          ms.file_name,
+          ms.file_url,
+          ms.file_mime_type,
+          ms.file_size,
+          ms.description,
+          ms.created_at
+        FROM member_submissions ms
+        WHERE ms.task_id = t.id
+        ORDER BY ms.created_at DESC
+        LIMIT 1
+      ) ms ON TRUE
+
+      WHERE p.team_id = $1
+        AND t.status IN ('submitted', 'under_review')
+
+      ORDER BY t.created_at DESC
+      `,
       [team.id]
     );
 
-    return res.json({ success: true, data: rows });
+    return res.json({
+      success: true,
+      data: rows,
+    });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: err.message });
+    console.error("Review submitted tasks error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
 
