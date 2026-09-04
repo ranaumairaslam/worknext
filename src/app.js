@@ -27,33 +27,58 @@ const allowedOrigins = [
 ];
 
 function isAllowedOrigin(origin) {
+  if (!origin) return false;
   const normalized = String(origin).trim().replace(/\/$/, '');
   if (allowedOrigins.includes(normalized)) return true;
-
-  // Any Vercel deployment (production or preview URL) of the frontend
   return /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/i.test(normalized);
 }
 
-const corsOptions = {
-  origin(origin, callback) {
-    // No Origin header (Postman/curl/server-to-server) → allow.
-    // Deny with callback(null, false) — never callback(new Error()), or Express
-    // turns it into a 500 instead of a clean CORS rejection.
-    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  exposedHeaders: ['Content-Disposition'],
-  optionsSuccessStatus: 204,
-  maxAge: 86400,
-};
+function applyCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader(
+    'Access-Control-Allow-Methods',
+    'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS'
+  );
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Authorization, Content-Type, X-Requested-With, Accept, Origin'
+  );
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
-app.use(cors(corsOptions));
+// Always answer preflight early (before routes / heavy handlers)
+app.use((req, res, next) => {
+  applyCorsHeaders(req, res);
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  return next();
+});
 
-// Answer preflight before any route/404 handler can swallow it
-app.options(/.*/, cors(corsOptions));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+    ],
+    optionsSuccessStatus: 204,
+    maxAge: 86400,
+  })
+);
 
 app.use(express.json());
 
@@ -61,10 +86,7 @@ app.use(express.json());
 // Static Files
 // =======================
 
-app.use(
-  '/uploads',
-  express.static(path.join(process.cwd(), 'uploads'))
-);
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // =======================
 // API Routes
@@ -95,9 +117,12 @@ app.use((req, res) => {
 });
 
 // =======================
-// Error Handler
+// Error Handler (keep CORS on errors)
 // =======================
 
-app.use(require('./middleware/error.middleware'));
+app.use((err, req, res, next) => {
+  applyCorsHeaders(req, res);
+  return require('./middleware/error.middleware')(err, req, res, next);
+});
 
 module.exports = app;

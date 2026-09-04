@@ -11,8 +11,11 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle Postgres client', err);
-  process.exit(1);
+  // Do not kill the process on Vercel serverless — idle client drops are common.
+  console.error('Unexpected error on idle Postgres client', err.message);
+  if (!process.env.VERCEL) {
+    process.exit(1);
+  }
 });
 
 module.exports = pool;
