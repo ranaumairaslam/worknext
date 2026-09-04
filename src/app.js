@@ -16,6 +16,8 @@ const DEFAULT_ORIGINS = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'https://worknest-softcenterci.vercel.app',
+  'http://localhost:3000',
+].map(origin => origin.trim());
 ];
 
 const allowedOrigins = [
@@ -52,6 +54,9 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// =======================
+// Body Parser
+// =======================
 // Answer preflight before any route/404 handler can swallow it
 app.options(/.*/, cors(corsOptions));
 

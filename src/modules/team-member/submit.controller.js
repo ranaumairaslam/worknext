@@ -66,79 +66,164 @@ async function storeSubmissionFile(req, file) {
 
 async function createSubmission(req, res) {
   try {
+    const taskId = Number.parseInt(req.body?.taskId, 10);
     const description = req.body?.description;
     const file = req.file;
 
     const errors = {};
-    if (!file) {
-      errors.file = 'File is required (image, PDF, or office document)';
+
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      errors.taskId = "Valid Task ID is required";
     }
+
+    if (!file) {
+      errors.file = "File is required (image, PDF, or office document)";
+    }
+
     if (!description || !String(description).trim()) {
-      errors.description = 'Description is required';
+      errors.description = "Description is required";
     }
 
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({
         success: false,
         code: 400,
-        message: 'Validation failed',
+        message: "Validation failed",
         errors,
       });
     }
 
     const userId = req.user.id;
-    const companyId = req.user.companyId || req.user.company_id || null;
+    const companyId =
+      req.user.companyId || req.user.company_id || null;
+
+    // ============================================
+    // 1. CHECK TASK
+    // ============================================
+    const taskCheck = await pool.query(
+      `
+      SELECT
+        id,
+        assignee_id,
+        status
+      FROM tasks
+      WHERE id = $1
+      `,
+      [taskId]
+    );
+
+    const task = taskCheck.rows[0];
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        code: 404,
+        message: "Task not found",
+      });
+    }
+
+    // ============================================
+    // 2. CHECK TASK OWNERSHIP
+    // ============================================
+    if (task.assignee_id !== userId) {
+      return res.status(403).json({
+        success: false,
+        code: 403,
+        message: "You are not assigned to this task",
+      });
+    }
+
+    // ============================================
+    // 3. STORE FILE
+    // ============================================
     const stored = await storeSubmissionFile(req, file);
 
+    // ============================================
+    // 4. SAVE SUBMISSION
+    // ============================================
     const { rows } = await pool.query(
-      `INSERT INTO member_submissions (
-         user_id,
-         company_id,
-         description,
-         file_name,
-         file_url,
-         file_public_id,
-         file_mime_type,
-         file_size,
-         storage
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING
-         id,
-         user_id AS "userId",
-         company_id AS "companyId",
-         description,
-         file_name AS "fileName",
-         file_url AS "fileUrl",
-         file_mime_type AS "fileMimeType",
-         file_size AS "fileSize",
-         storage,
-         created_at AS "createdAt"`,
+      `
+      INSERT INTO member_submissions (
+        user_id,
+        company_id,
+        description,
+        file_name,
+        file_url,
+        file_public_id,
+        file_mime_type,
+        file_size,
+        storage,
+        task_id
+      )
+      VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10
+      )
+      RETURNING
+        id,
+        user_id AS "userId",
+        company_id AS "companyId",
+        description,
+        file_name AS "fileName",
+        file_url AS "fileUrl",
+        file_public_id AS "filePublicId",
+        file_mime_type AS "fileMimeType",
+        file_size AS "fileSize",
+        storage,
+        task_id AS "taskId",
+        created_at AS "createdAt"
+      `,
       [
         userId,
         companyId,
         String(description).trim(),
-        file.originalname || 'file',
+        file.originalname || "file",
         stored.fileUrl,
         stored.filePublicId,
         file.mimetype || null,
         file.size || null,
         stored.storage,
+        taskId,
       ]
     );
 
+    // ============================================
+    // 5. UPDATE TASK STATUS
+    // ============================================
+    const taskUpdate = await pool.query(
+      `
+      UPDATE tasks
+      SET
+        status = 'under_review',
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id AS "taskId",
+        status,
+        updated_at AS "updatedAt"
+      `,
+      [taskId]
+    );
+
+    // ============================================
+    // 6. SUCCESS
+    // ============================================
     return res.status(201).json({
       success: true,
       code: 201,
-      message: 'Submission uploaded successfully',
-      data: rows[0],
+      message: "Task submitted successfully",
+      data: {
+        submission: rows[0],
+        task: taskUpdate.rows[0],
+      },
     });
   } catch (error) {
-    console.error('createSubmission error:', error);
+    console.error("createSubmission error:", error);
+
     return res.status(500).json({
       success: false,
       code: 500,
-      message: error.message || 'Failed to create submission',
+      message: error.message || "Failed to create submission",
     });
   }
 }
