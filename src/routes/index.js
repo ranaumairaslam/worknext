@@ -16,6 +16,7 @@ const teamMemberRoutes = require('../modules/team-member/team-member.routes');
 const clientUserRoutes = require('../modules/clients/client-user.routes');
 const notificationRoutes = require('../modules/notifications/notification.routes');
 const profileRoutes = require('../modules/profile/profile.routes');
+const contactRoutes = require('../modules/contact/contact.routes');
 
 // Mount Routes
 router.use('/auth', authRoutes);
@@ -27,6 +28,7 @@ router.use('/client', clientUserRoutes);
 router.use('/team-member', teamMemberRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/profile', profileRoutes);
+router.use('/contact-us', contactRoutes);
 
 // Compatibility route
 router.use('/login', (req, res, next) => {
